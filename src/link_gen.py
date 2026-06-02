@@ -1,30 +1,24 @@
 import os
 from pathlib import Path
-from typing import List, Set
+from typing import List, Dict
 from src.filter import is_ignored
 
-def generate_links(project_path: Path, base_url: str, spec) -> List[str]:
-    links = []
+def generate_links_grouped(project_path: Path, base_url: str, spec) -> Dict[str, List[str]]:
+    # { "Root Files": [url1, url2], "dir1": [url3, url4] }
+    grouped = {"Root Files": []}
     
-    # Add the base root itself
-    links.append(base_url)
-    
-    # We want to sort: Root files, then other directories and their contents
-    root_files = []
-    other_items = []
+    # Pre-calculate project name
+    project_name = project_path.name
     
     for root, dirs, files in os.walk(project_path):
         rel_root = Path(root).relative_to(project_path)
         
-        # Filter directories in place to skip ignored ones
+        # Filter directories in place
         dirs[:] = [d for d in dirs if not is_ignored(Path(root) / d, project_path, spec)]
         
-        for d in dirs:
-            dir_path = Path(root) / d
-            rel_dir = dir_path.relative_to(project_path)
-            url = base_url + str(rel_dir).replace("\\", "/") + "/"
-            other_items.append(url)
-            
+        # Sort files to ensure deterministic order
+        files.sort()
+        
         for f in files:
             file_path = Path(root) / f
             if is_ignored(file_path, project_path, spec):
@@ -34,29 +28,47 @@ def generate_links(project_path: Path, base_url: str, spec) -> List[str]:
             url = base_url + str(rel_file).replace("\\", "/")
             
             if rel_root == Path("."):
-                root_files.append(url)
+                grouped["Root Files"].append(url)
             else:
-                other_items.append(url)
+                # Use relative root string as key
+                dir_key = str(rel_root).replace("\\", "/")
+                if dir_key not in grouped:
+                    grouped[dir_key] = []
+                grouped[dir_key].append(url)
                 
-    # Sort root files and other items alphabetically
-    root_files.sort()
-    other_items.sort()
-    
-    return [base_url] + root_files + other_items
+    return grouped
 
-def write_link_md(project_path: Path, links: List[str]):
-    content = "```text\n"
-    # Remove duplicates and keep order (though our walk shouldn't have duplicates)
-    seen = set()
-    unique_links = []
-    for l in links:
-        if l not in seen:
-            unique_links.append(l)
-            seen.add(l)
-            
-    content += "\n".join(unique_links)
-    content += "\n```"
+def write_link_md(project_path: Path, base_url: str, spec):
+    grouped = generate_links_grouped(project_path, base_url, spec)
+    project_name = project_path.name
     
+    lines = []
+    lines.append(f"# {project_name}")
+    lines.append("")
+    lines.append(f"> {base_url}")
+    lines.append("")
+    
+    # 1. Root Files
+    if grouped["Root Files"]:
+        lines.append("## Root Files")
+        lines.append("")
+        for url in grouped["Root Files"]:
+            lines.append("```text")
+            lines.append(url)
+            lines.append("```")
+            lines.append("")
+            
+    # 2. Other directories
+    sorted_dirs = sorted([k for k in grouped.keys() if k != "Root Files"])
+    for d in sorted_dirs:
+        lines.append(f"## {d}")
+        lines.append("")
+        for url in grouped[d]:
+            lines.append("```text")
+            lines.append(url)
+            lines.append("```")
+            lines.append("")
+            
     link_md_path = project_path / "link.md"
-    link_md_path.write_text(content, encoding="utf-8")
-    print(f"Generated {link_md_path}")
+    link_md_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"已生成: {link_md_path}")

@@ -8,39 +8,36 @@ from pathlib import Path
 
 from src.site_info import get_site_url
 from src.filter import get_ignore_spec
-from src.link_gen import generate_links, write_link_md
+from src.link_gen import write_link_md
 
 def main():
     try:
-        path_input = input("Please enter the website project path: ").strip()
+        path_input = input("请输入个人网站项目路径: ").strip()
         if not path_input:
-            print("Path cannot be empty.")
+            print("路径不能为空。")
             return
         
         project_path = Path(path_input).resolve()
         if not project_path.exists() or not project_path.is_dir():
-            print(f"Error: {project_path} is not a valid directory.")
+            print(f"错误: {project_path} 不是有效的目录。")
             return
 
-        print(f"Processing project at: {project_path}")
+        print(f"正在处理项目: {project_path}")
         
-        # 1. Get/Normalize Site URL
+        # 1. 获取并规范化网站 URL
         base_url = get_site_url(project_path)
-        print(f"Website URL: {base_url}")
+        print(f"网站链接: {base_url}")
         
-        # 2. Get Ignore Spec and ensure link.md is ignored
+        # 2. 获取忽略配置并确保 link.md 被忽略
         spec = get_ignore_spec(project_path)
         
-        # 3. Generate links
-        links = generate_links(project_path, base_url, spec)
+        # 3. 生成并写入 link.md
+        write_link_md(project_path, base_url, spec)
         
-        # 4. Write link.md
-        write_link_md(project_path, links)
-        
-        print("Success!")
+        print("成功！")
 
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"发生意外错误: {e}")
         import traceback
         traceback.print_exc()
 

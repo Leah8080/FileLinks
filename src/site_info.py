@@ -9,14 +9,14 @@ def get_site_url(project_path: Path) -> str:
         url = cname_path.read_text(encoding="utf-8").strip()
     
     if not url:
-        print(f"No CNAME file found or empty in {project_path}")
-        url = input("Please enter the website URL (e.g., https://test.haha.org): ").strip()
+        print(f"在 {project_path} 中未找到 CNAME 文件或内容为空。")
+        url = input("请输入网站 URL (例如 https://test.haha.org): ").strip()
         while not url:
-            url = input("URL cannot be empty. Please enter the website URL: ").strip()
+            url = input("URL 不能为空，请重新输入: ").strip()
         
         # Save to CNAME
         cname_path.write_text(url, encoding="utf-8")
-        print(f"CNAME file created at {cname_path}")
+        print(f"已创建 CNAME 文件: {cname_path}")
 
     # Normalize URL
     # Handle cases: test.haha.org, https://test.haha.org, https://test.haha.org/
