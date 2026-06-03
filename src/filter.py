@@ -54,6 +54,10 @@ def get_ignore_spec(project_path: Path):
         
         all_patterns.append("link.md")
 
+    # 4. 确保 server.json 被忽略 (包含敏感信息)
+    if "server.json" not in all_patterns:
+        all_patterns.append("server.json")
+
     spec = pathspec.PathSpec.from_lines('gitwildmatch', all_patterns)
     return spec
 

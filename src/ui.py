@@ -28,6 +28,15 @@ def print_step(message: str):
 def print_summary(total: int, links: int, filtered: int):
     print(f"{BOLD}{CYAN}📊 摘要信息：文件: {total} | 链接: {links} | 过滤: {filtered}{RESET}")
 
+def print_menu(title: str, options: list):
+    """
+    打印一个带标题的菜单
+    """
+    print(f"\n{BOLD}{CYAN}=== {title} ==={RESET}")
+    for i, option in enumerate(options, 1):
+        print(f"{BOLD}{BLUE}{i}.{RESET} {option}")
+    print(f"{BOLD}{CYAN}=" * (len(title) + 8) + f"{RESET}")
+
 def ask_input(prompt: str) -> str:
     print(f"{BOLD}{CYAN}✏️ {prompt}{RESET}", end="")
     return input().strip()

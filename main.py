@@ -9,12 +9,13 @@ from pathlib import Path
 from src.site_info import get_site_url
 from src.filter import get_ignore_spec
 from src.link_gen import write_link_md
-from src.ui import print_success, print_info, print_error, print_step, ask_input
+from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu
+from src.sync import sync_files
 
 def print_header():
     """打印菜单头部"""
     print("=" * 40)
-    print("         🔗 网站文件链接生成工具")
+    print("         🌐 网站文件管理工具")
     print("=" * 40)
     print()
 
@@ -25,40 +26,67 @@ def clear_screen():
 def main():
     try:
         clear_screen()
+        print_header()
+        
         while True:
-            print_header()
             path_input = ask_input("请输入网站项目路径: ")
             
             if not path_input:
                 print_error("路径不能为空，请重新输入...")
-                input()
-                clear_screen()
                 continue
             
             project_path = Path(path_input).resolve()
             if not project_path.exists() or not project_path.is_dir():
                 print_error(f"不是有效的目录, 请重新输入...")
-                input()
-                clear_screen()
                 continue
             
             break
 
-        print_step(f"处理项目: {project_path}")
-        
-        # 1. 获取并规范化网站 URL
-        print_step("提取项目网站链接...")
-        base_url = get_site_url(project_path)
-        print_info(f"网站链接: {base_url}")
-        
-        # 2. 获取忽略配置并确保 link.md 被忽略
-        spec = get_ignore_spec(project_path)
-        
-        # 3. 生成并写入 link.md
-        print_step("生成网站文件访问链接...")
-        write_link_md(project_path, base_url, spec)
-        
-        print_success("处理完成！")
+        while True:
+            clear_screen()
+            print_header()
+            print_info(f"当前项目: {project_path}")
+            
+            options = ["同步文件", "生成链接", "退出脚本"]
+            print_menu("文件管理菜单", options)
+            
+            choice = ask_input("请选择操作 (1-3): ")
+            
+            if choice == "1":
+                # 同步文件
+                print_step("准备同步文件...")
+                try:
+                    spec = get_ignore_spec(project_path)
+                    sync_files(project_path, spec)
+                except Exception as e:
+                    print_error(f"同步失败: {e}")
+                input("\n按回车键继续...")
+                
+            elif choice == "2":
+                # 生成链接
+                print_step(f"处理项目: {project_path}")
+                
+                # 1. 获取并规范化网站 URL
+                print_step("提取项目网站链接...")
+                base_url = get_site_url(project_path)
+                print_info(f"网站链接: {base_url}")
+                
+                # 2. 获取忽略配置并确保 link.md 被忽略
+                spec = get_ignore_spec(project_path)
+                
+                # 3. 生成并写入 link.md
+                print_step("生成网站文件访问链接...")
+                write_link_md(project_path, base_url, spec)
+                
+                print_success("处理完成！")
+                input("\n按回车键继续...")
+                
+            elif choice == "3":
+                print_info("退出脚本，再见！")
+                break
+            else:
+                print_error("无效的选择，请重新输入。")
+                input("\n按回车键继续...")
 
     except Exception as e:
         print_error(f"发生意外错误: {e}")
