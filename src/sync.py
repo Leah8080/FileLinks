@@ -7,41 +7,132 @@ import pathspec
 from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, ask_confirm, console
 from src.filter import is_ignored
 
-def generate_tree(path: Path, project_root: Path, spec, tree=None):
-    """递归生成 Rich 目录树"""
-    from rich.tree import Tree
-    
-    if tree is None:
-        tree = Tree(f"[bold blue]📁 {path.name}[/bold blue]")
-    
-    items = sorted(list(path.iterdir()), key=lambda x: (not x.is_dir(), x.name.lower()))
-    
-    for item in items:
-        if is_ignored(item, project_root, spec, item.is_dir()):
-            continue
-            
-        if item.is_dir():
-            branch = tree.add(f"[bold blue]📁 {item.name}[/bold blue]")
-            generate_tree(item, project_root, spec, branch)
-        else:
-            tree.add(f"[green]📄 {item.name}[/green]")
-    return tree
-
-def count_local_items(path: Path, project_root: Path, spec):
-    """统计待同步的文件和文件夹数量"""
-    file_count = 0
-    dir_count = 0
+def get_local_structure(path: Path, project_root: Path, spec):
+    """获取本地文件结构及基本信息"""
+    structure = {}
     for item in path.iterdir():
         if is_ignored(item, project_root, spec, item.is_dir()):
             continue
+        
+        rel_path = item.relative_to(project_root).as_posix()
         if item.is_dir():
-            dir_count += 1
-            sub_files, sub_dirs = count_local_items(item, project_root, spec)
-            file_count += sub_files
-            dir_count += sub_dirs
+            structure[rel_path] = {"type": "dir", "size": 0}
+            structure.update(get_local_structure(item, project_root, spec))
         else:
-            file_count += 1
-    return file_count, dir_count
+            structure[rel_path] = {"type": "file", "size": item.stat().st_size}
+    return structure
+
+def get_remote_structure_ftp(ftp, current_remote, base_remote):
+    """递归获取 FTP 远程结构"""
+    structure = {}
+    try:
+        items = ftp.nlst(current_remote)
+    except ftplib.error_perm:
+        return {}
+
+    for remote_item_path in items:
+        remote_item_path = remote_item_path.replace("\\", "/")
+        name = Path(remote_item_path).name
+        if name in (".", ".."): continue
+
+        if not remote_item_path.startswith("/"):
+            remote_item_path = (Path(current_remote) / name).as_posix()
+
+        try:
+            rel_path = Path(remote_item_path).relative_to(base_remote).as_posix()
+        except ValueError:
+            rel_path = remote_item_path.replace(base_remote, "", 1).lstrip("/")
+
+        is_dir = False
+        size = 0
+        try:
+            ftp.cwd(remote_item_path)
+            ftp.cwd("/") 
+            is_dir = True
+        except ftplib.error_perm:
+            is_dir = False
+            try:
+                size = ftp.size(remote_item_path) or 0
+            except:
+                size = 0
+
+        if is_dir:
+            structure[rel_path] = {"type": "dir", "size": 0}
+            structure.update(get_remote_structure_ftp(ftp, remote_item_path, base_remote))
+        else:
+            structure[rel_path] = {"type": "file", "size": size}
+            
+    return structure
+
+def get_remote_structure_sftp(sftp, current_remote, base_remote):
+    """递归获取 SFTP 远程结构"""
+    import stat
+    structure = {}
+    try:
+        items = sftp.listdir_attr(current_remote)
+    except IOError:
+        return {}
+
+    for item in items:
+        name = item.filename
+        if name in (".", ".."): continue
+        
+        remote_item_path = (Path(current_remote) / name).as_posix()
+        try:
+            rel_path = Path(remote_item_path).relative_to(base_remote).as_posix()
+        except ValueError:
+            rel_path = remote_item_path.replace(base_remote, "", 1).lstrip("/")
+            
+        is_dir = stat.S_ISDIR(item.st_mode)
+        if is_dir:
+            structure[rel_path] = {"type": "dir", "size": 0}
+            structure.update(get_remote_structure_sftp(sftp, remote_item_path, base_remote))
+        else:
+            structure[rel_path] = {"type": "file", "size": item.st_size}
+    return structure
+
+def generate_sync_tree(local_struct, remote_struct, project_name):
+    """生成包含同步状态的 Rich 目录树"""
+    from rich.tree import Tree
+    
+    tree = Tree(f"[bold blue]📁 {project_name}[/bold blue] [dim](对比预览)[/dim]")
+    
+    all_paths = sorted(list(set(local_struct.keys()) | set(remote_struct.keys())))
+    nodes = {"": tree}
+    
+    for path_str in all_paths:
+        parts = path_str.split("/")
+        parent_path = "/".join(parts[:-1])
+        name = parts[-1]
+        
+        status = ""
+        style = ""
+        
+        if path_str in local_struct and path_str not in remote_struct:
+            status = "[待同步]"
+            style = "bold green"
+        elif path_str not in local_struct and path_str in remote_struct:
+            status = "[待删除]"
+            style = "bold red"
+        elif path_str in local_struct and path_str in remote_struct:
+            if local_struct[path_str]["type"] == "dir":
+                status = "[未变动]"
+                style = "dim"
+            elif local_struct[path_str]["size"] == remote_struct[path_str]["size"]:
+                status = "[未变动]"
+                style = "dim"
+            else:
+                status = "[待同步]"
+                style = "bold yellow"
+        
+        info = local_struct.get(path_str) or remote_struct.get(path_str)
+        icon = "📁" if info["type"] == "dir" else "📄"
+        display_text = f"[{style}]{icon} {name} {status}[/{style}]"
+        
+        if parent_path in nodes:
+            nodes[path_str] = nodes[parent_path].add(display_text)
+            
+    return tree
 
 def load_server_config(project_path: Path):
     server_json_path = project_path / "server.json"
@@ -64,18 +155,37 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         return
         
     config = config_all[protocol]
-
     print_server_info(protocol, config)
     
-    print_step("正在分析本地待同步文件...")
-    file_count, dir_count = count_local_items(project_path, project_path, spec)
-    print_info(f"待同步: [bold]{file_count}[/bold] 个文件, [bold]{dir_count}[/bold] 个文件夹")
+    print_step("正在分析同步计划，请稍候...")
+    local_struct = get_local_structure(project_path, project_path, spec)
+    remote_struct = {}
     
-    print_step("待同步目录结构:")
-    tree = generate_tree(project_path, project_path, spec)
-    console.print(tree)
+    try:
+        if protocol == "ftp":
+            with ftplib.FTP() as ftp:
+                ftp.connect(config.get("host"), config.get("port", 21), timeout=config.get("timeout", 30))
+                ftp.login(config.get("user"), config.get("password"))
+                r_path = config.get("remote_path") or ftp.pwd()
+                remote_struct = get_remote_structure_ftp(ftp, r_path, r_path)
+        else:
+            import paramiko
+            transport = paramiko.Transport((config.get("host"), config.get("port", 22)))
+            transport.connect(username=config.get("user"), password=config.get("password"))
+            sftp = paramiko.SFTPClient.from_transport(transport)
+            r_path = config.get("remote_path") or sftp.normalize('.')
+            remote_struct = get_remote_structure_sftp(sftp, r_path, r_path)
+            sftp.close()
+            transport.close()
+    except Exception as e:
+        print_error(f"获取远程结构失败: {e}")
+        if not ask_confirm("无法完整获取远程结构，是否直接开始强制同步?"):
+            return
+
+    sync_tree = generate_sync_tree(local_struct, remote_struct, project_path.name)
+    console.print(sync_tree)
     
-    if not ask_confirm("确认开始同步到服务器吗?"):
+    if not ask_confirm("确认执行上述同步计划吗?"):
         print_warning("已取消同步操作。")
         return
 
@@ -159,29 +269,24 @@ def cleanup_remote_ftp(ftp, local_root, current_remote, base_remote, spec):
             return
 
         for remote_item_path in items:
-            # 统一路径格式
             remote_item_path = remote_item_path.replace("\\", "/")
             name = Path(remote_item_path).name
             if name in (".", ".."): continue
 
-            # 确保获取的是绝对路径
             if not remote_item_path.startswith("/"):
                 remote_item_path = (Path(current_remote) / name).as_posix()
 
-            # 计算相对于 base_remote 的路径，以映射本地路径
             try:
                 rel_path = Path(remote_item_path).relative_to(base_remote)
             except ValueError:
-                # 兼容不同服务器返回的路径格式
                 rel_path = Path(remote_item_path.replace(base_remote, "", 1).lstrip("/"))
                 
             local_item_path = local_root / rel_path
 
-            # 判断类型
             is_dir = False
             try:
                 ftp.cwd(remote_item_path)
-                ftp.cwd("/") # 先回根目录防止路径混淆
+                ftp.cwd("/") 
                 is_dir = True
             except ftplib.error_perm:
                 is_dir = False
