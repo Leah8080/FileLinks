@@ -1,15 +1,7 @@
 import re
 import os
 from pathlib import Path
-
-# Color constants
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-BLUE = "\033[34m"
-CYAN = "\033[36m"
-RED = "\033[31m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
+from src.ui import print_success, print_info, print_error, ask_input
 
 def get_site_url(project_path: Path) -> str:
     cname_path = project_path / "CNAME"
@@ -19,18 +11,17 @@ def get_site_url(project_path: Path) -> str:
         url = cname_path.read_text(encoding="utf-8").strip()
     
     if not url:
-        print(f"\n{YELLOW}ℹ 未在 {project_path} 中找到 CNAME 文件或内容为空。{RESET}")
+        print_info(f"未在 {project_path} 中找到 CNAME 文件或内容为空。")
         # Support domain + optional path (e.g., sound.jp/app)
         site_regex = re.compile(
             r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:/[a-zA-Z0-9._~:/?#\[\]@!$&\'()*+,;=%-]*)?$'
         )
         
         while True:
-            print(f"{BOLD}{CYAN}▶ 请输入网站 URL{RESET} (例如 https://www.test.org): ", end="")
-            site_input = input().strip()
+            site_input = ask_input("请输入网站 URL (例如 https://www.test.org): ")
             
             if not site_input:
-                print(f"{RED}✘ URL 不能为空，请重新输入。{RESET}")
+                print_error("URL 不能为空，请重新输入。")
                 continue
             
             # Strip protocol if present to validate the structure
@@ -42,11 +33,11 @@ def get_site_url(project_path: Path) -> str:
                 url = f"https://{site_path}"
                 break
             else:
-                print(f"{RED}✘ 请输入有效的 URL 格式。{RESET}")
+                print_error("请输入有效的 URL 格式。")
         
         # Save to CNAME
         cname_path.write_text(url, encoding="utf-8")
-        print(f"{GREEN}✔ 已创建 CNAME 文件: {cname_path}{RESET}\n")
+        print_success(f"已创建 CNAME 文件: {cname_path}")
 
     # Normalize URL
     normalized_url = url

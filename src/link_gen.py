@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Dict
 from src.filter import is_ignored
 from src.config_loader import load_config
+from src.ui import print_success
 
 def get_file_icon(file_path: Path, icons_config: dict) -> str:
     ext = file_path.suffix.lower()
@@ -98,4 +99,4 @@ def write_link_md(project_path: Path, base_url: str, spec):
             
     link_md_path = project_path / "link.md"
     link_md_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"已生成: {link_md_path}")
+    print_success(f"已生成: {link_md_path}")

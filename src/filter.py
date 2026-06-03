@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import pathspec
 from src.config_loader import load_config
+from src.ui import print_success
 
 def get_ignore_spec(project_path: Path):
     config = load_config()
@@ -45,11 +46,11 @@ def get_ignore_spec(project_path: Path):
             suffix = "" if (not current_content or current_content.endswith("\n")) else "\n"
             with open(target_file, "a", encoding="utf-8") as f:
                 f.write(f"{suffix}link.md\n")
-            print(f"已将 link.md 添加到 {target_file.name}")
+            print_success(f"已将 link.md 添加到 {target_file.name}")
         else:
             target_file.write_text("link.md\n", encoding="utf-8")
             all_patterns.append(target_file.name) # 确保新创建的忽略文件也被忽略
-            print(f"已创建 {target_file.name} 并添加 link.md")
+            print_success(f"已创建 {target_file.name} 并添加 link.md")
         
         all_patterns.append("link.md")
 
