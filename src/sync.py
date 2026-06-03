@@ -158,6 +158,8 @@ def sync_ftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
             cleanup_remote_ftp(ftp, project_path, remote_path, spec)
             
             print_success("FTP 同步完成！")
+    except Exception as e:
+        print_error(f"FTP 同步过程中出错: {e}")
 
 def cleanup_remote_ftp(ftp, local_root, remote_root, spec):
     """递归删除远程服务器上多余的文件和目录"""
@@ -203,9 +205,6 @@ def cleanup_remote_ftp(ftp, local_root, remote_root, spec):
                     ftp.delete(remote_item_path)
                 except Exception as e:
                     print_error(f"删除文件失败: {rel_path}, {e}")
-            
-    except Exception as e:
-        print_error(f"FTP 同步过程中出错: {e}")
 
 def ensure_remote_dir_sftp(sftp, path):
     """确保远程 SFTP 目录存在"""
@@ -288,7 +287,7 @@ def sync_sftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
         print_error(f"SFTP 同步过程中出错: {e}")
 
 def cleanup_remote_sftp(sftp, local_root, remote_root, spec):
-    """递归删除远程 SFTP 服务器上多余的文件和目录"""
+    """递归删除远程 SFTP 服务器上多余的文件 and 目录"""
     import stat
     try:
         items = sftp.listdir_attr(remote_root)
