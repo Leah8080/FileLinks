@@ -2,10 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-# Add src to path if needed, but since we are running from root, 
-# and src is a package (if we add __init__.py), it should work.
-# Actually, I'll just use absolute imports if I treat src as a package.
-
+# Add src to path if needed
 from src.site_info import get_site_url
 from src.filter import get_ignore_spec
 from src.link_gen import write_link_md
@@ -79,32 +76,17 @@ def generate_links_workflow(project_path):
 def main():
     header_title = "🌐 网站文件管理工具"
     try:
-        clear_screen()
-        print_header(header_title)
-        
-        while True:
-            path_input = ask_input("请输入网站项目路径: ")
-            
-            if not path_input:
-                print_error("路径不能为空，请重新输入...")
-                continue
-            
-            project_path = Path(path_input).resolve()
-            if not project_path.exists() or not project_path.is_dir():
-                print_error(f"不是有效的目录, 请重新输入...")
-                continue
-            
-            break
+        project_path = select_project_workflow(header_title)
 
         while True:
             clear_screen()
             print_header(header_title)
             print_info(f"当前项目: {project_path}")
             
-            options = ["同步文件", "生成链接", "退出脚本"]
+            options = ["同步文件", "生成链接", "切换项目", "退出脚本"]
             print_menu("文件管理菜单", options)
             
-            choice = ask_input("请选择操作 (0-2): ")
+            choice = ask_input("请选择操作 (0-3): ")
             
             if choice == "1":
                 # 同步文件
@@ -127,6 +109,10 @@ def main():
                 except Exception as e:
                     print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
+            
+            elif choice == "3":
+                # 切换项目
+                project_path = select_project_workflow(header_title)
                 
             elif choice == "0":
                 print_info("退出脚本，再见！")
