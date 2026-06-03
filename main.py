@@ -13,7 +13,7 @@ from src.ui import print_success, print_info, print_error, print_step, ask_input
 
 def main():
     try:
-        path_input = ask_input("请输入个人网站项目路径: ")
+        path_input = ask_input("请输入网站项目路径: ")
         if not path_input:
             print_error("路径不能为空。")
             return
@@ -23,9 +23,10 @@ def main():
             print_error(f"{project_path} 不是有效的目录。")
             return
 
-        print_step(f"正在处理项目: {project_path}")
+        print_step(f"处理项目: {project_path}")
         
         # 1. 获取并规范化网站 URL
+        print_step("提取项目网站链接...")
         base_url = get_site_url(project_path)
         print_info(f"网站链接: {base_url}")
         
@@ -33,6 +34,7 @@ def main():
         spec = get_ignore_spec(project_path)
         
         # 3. 生成并写入 link.md
+        print_step("生成网站文件访问链接...")
         write_link_md(project_path, base_url, spec)
         
         print_success("处理完成！")

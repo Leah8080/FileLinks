@@ -11,7 +11,7 @@ def get_site_url(project_path: Path) -> str:
         url = cname_path.read_text(encoding="utf-8").strip()
     
     if not url:
-        print_info(f"未在 {project_path} 中找到 CNAME 文件或内容为空。")
+        print_error(f"在 {project_path} 中未找到 CNAME 文件或内容为空。")
         # Support domain + optional path (e.g., sound.jp/app)
         site_regex = re.compile(
             r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:/[a-zA-Z0-9._~:/?#\[\]@!$&\'()*+,;=%-]*)?$'

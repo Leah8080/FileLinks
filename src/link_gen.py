@@ -99,4 +99,4 @@ def write_link_md(project_path: Path, base_url: str, spec):
             
     link_md_path = project_path / "link.md"
     link_md_path.write_text("\n".join(lines), encoding="utf-8")
-    print_success(f"已生成: {link_md_path}")
+    print_success(f"链接文件: {link_md_path}")

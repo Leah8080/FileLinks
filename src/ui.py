@@ -11,20 +11,20 @@ BOLD = "\033[1m"
 DIM = "\033[2m"
 
 def print_success(message: str):
-    print(f"{GREEN}✔ {message}{RESET}")
+    print(f"{GREEN}✅ {message}{RESET}")
 
 def print_info(message: str):
-    print(f"{CYAN}ℹ {message}{RESET}")
+    print(f"{CYAN}📝 {message}{RESET}")
 
 def print_warning(message: str):
-    print(f"{YELLOW}⚠ {message}{RESET}")
+    print(f"{YELLOW}🚨 {message}{RESET}")
 
 def print_error(message: str):
-    print(f"{RED}✘ {message}{RESET}")
+    print(f"{RED}❌ {message}{RESET}")
 
 def print_step(message: str):
-    print(f"\n{BOLD}{BLUE}➤ {message}{RESET}")
+    print(f"\n{BOLD}{BLUE}➡️ {message}{RESET}")
 
 def ask_input(prompt: str) -> str:
-    print(f"{BOLD}{CYAN}▶ {prompt}{RESET}", end="")
+    print(f"{BOLD}{CYAN}✏️ {prompt}{RESET}", end="")
     return input().strip()
