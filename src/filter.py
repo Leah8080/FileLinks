@@ -58,6 +58,10 @@ def get_ignore_spec(project_path: Path):
     if "server.json" not in all_patterns:
         all_patterns.append("server.json")
 
+    # 5. 确保本地同步状态缓存文件被忽略
+    if ".sync_state.json" not in all_patterns:
+        all_patterns.append(".sync_state.json")
+
     spec = pathspec.PathSpec.from_lines('gitwildmatch', all_patterns)
     return spec
 

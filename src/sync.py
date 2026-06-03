@@ -11,7 +11,40 @@ from rich.table import Table
 from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, ask_confirm, console
 from src.filter import is_ignored
 
+import hashlib
+
 # --- 辅助函数 ---
+
+def calculate_md5(file_path: Path) -> str:
+    """计算本地文件的 MD5 校验和"""
+    hash_md5 = hashlib.md5()
+    try:
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+    except Exception:
+        return ""
+
+def load_sync_state(project_path: Path) -> dict:
+    """加载本地同步状态缓存"""
+    state_file = project_path / ".sync_state.json"
+    if state_file.exists():
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_sync_state(project_path: Path, state: dict):
+    """保存当前同步状态到缓存"""
+    state_file = project_path / ".sync_state.json"
+    try:
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print_warning(f"无法保存同步状态缓存: {e}")
 
 def normalize_path(path_str):
     """确保路径使用正斜杠，且不带末尾斜杠。保留起始斜杠以维持绝对路径性质。"""
@@ -31,7 +64,11 @@ def get_local_structure(path: Path, project_root: Path, spec):
             structure[rel_path] = {"type": "dir", "size": 0}
             structure.update(get_local_structure(item, project_root, spec))
         else:
-            structure[rel_path] = {"type": "file", "size": item.stat().st_size}
+            structure[rel_path] = {
+                "type": "file",
+                "size": item.stat().st_size,
+                "md5": calculate_md5(item)
+            }
     return structure
 
 def get_remote_structure_ftp(ftp, current_remote, base_remote):
@@ -100,8 +137,10 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote):
 
 # --- 同步计划 ---
 
-def generate_sync_plan(local_struct, remote_struct):
+def generate_sync_plan(local_struct, remote_struct, cache_struct=None):
     """对比两端结构，生成同步计划"""
+    if cache_struct is None:
+        cache_struct = {}
     all_paths = sorted(list(set(local_struct.keys()) | set(remote_struct.keys())))
     plan = {"upload": [], "delete": [], "skip": []}
     stats = {"added": 0, "updated": 0, "deleted": 0}
@@ -120,13 +159,26 @@ def generate_sync_plan(local_struct, remote_struct):
             if local_struct[path]["type"] == "dir":
                 plan["skip"].append(path)
                 path_states[path] = "none"
-            elif local_struct[path]["size"] == remote_struct[path]["size"]:
-                plan["skip"].append(path)
-                path_states[path] = "none"
             else:
-                plan["upload"].append(path)
-                path_states[path] = "updated"
-                stats["updated"] += 1
+                # 文件对比：
+                # 1. 优先对比文件大小是否变化
+                # 2. 如果大小一致，检查缓存：若 MD5 改变，说明是同大小修改；若没有缓存，则认为无变化
+                is_modified = False
+                if local_struct[path]["size"] != remote_struct[path]["size"]:
+                    is_modified = True
+                elif path in cache_struct:
+                    local_md5 = local_struct[path].get("md5", "")
+                    cached_md5 = cache_struct[path].get("md5", "")
+                    if local_md5 and cached_md5 and local_md5 != cached_md5:
+                        is_modified = True
+                
+                if is_modified:
+                    plan["upload"].append(path)
+                    path_states[path] = "updated"
+                    stats["updated"] += 1
+                else:
+                    plan["skip"].append(path)
+                    path_states[path] = "none"
                 
     return plan, path_states, stats
 
@@ -210,10 +262,12 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         except Exception as e:
             print_warning(f"分析远程结构时遇到问题: {e}")
 
-    plan, path_states, stats = generate_sync_plan(local_struct, remote_struct)
+    cache_struct = load_sync_state(project_path)
+    plan, path_states, stats = generate_sync_plan(local_struct, remote_struct, cache_struct)
     display_sync_tree(path_states, local_struct, remote_struct, project_path.name, stats)
     
     if not (plan["upload"] or plan["delete"]):
+        save_sync_state(project_path, local_struct)
         print_success("本地与远程完全一致，无需操作。")
         return False
 
@@ -226,6 +280,8 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
             run_ftp_plan(project_path, config, plan)
         else:
             run_sftp_plan(project_path, config, plan)
+        
+        save_sync_state(project_path, local_struct)
         return True
     except Exception as e:
         print_error(f"同步失败: {e}")
@@ -257,8 +313,25 @@ def run_ftp_plan(project_root, config, plan):
                     else:
                         task = progress.add_task(f"上传 {path}", total=local_file.stat().st_size)
                         ensure_remote_dir_ftp(ftp, normalize_path(os.path.dirname(remote_file)))
-                        with open(local_file, "rb") as f:
-                            ftp.storbinary(f"STOR {remote_file}", f, callback=lambda chunk: progress.update(task, advance=len(chunk)))
+                        try:
+                            with open(local_file, "rb") as f:
+                                ftp.storbinary(f"STOR {remote_file}", f, callback=lambda chunk: progress.update(task, advance=len(chunk)))
+                        except ftplib.error_perm as e:
+                            err_msg = str(e)
+                            if "553" in err_msg or "550" in err_msg:
+                                try:
+                                    ftp.delete(remote_file)
+                                    with open(local_file, "rb") as f:
+                                        ftp.storbinary(f"STOR {remote_file}", f, callback=lambda chunk: progress.update(task, advance=len(chunk)))
+                                except Exception as retry_err:
+                                    progress.remove_task(task)
+                                    raise Exception(f"无法上传文件 {path} (权限错误，重试失败): {retry_err}")
+                            else:
+                                progress.remove_task(task)
+                                raise e
+                        except Exception as e:
+                            progress.remove_task(task)
+                            raise e
                         progress.remove_task(task)
         
     if plan["delete"]:
