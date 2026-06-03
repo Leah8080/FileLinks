@@ -2,13 +2,18 @@ import os
 from pathlib import Path
 from typing import List, Dict
 from src.filter import is_ignored
+from src.config_loader import load_config
 
-def generate_links_grouped(project_path: Path, base_url: str, spec) -> Dict[str, List[str]]:
-    # { "Root Files": [url1, url2], "dir1": [url3, url4] }
+def get_file_icon(file_path: Path, icons_config: dict) -> str:
+    ext = file_path.suffix.lower()
+    icon = icons_config.get(ext)
+    if not icon:
+        icon = icons_config.get("default", "")
+    return icon
+
+def generate_links_grouped(project_path: Path, base_url: str, spec, icons_config: dict) -> Dict[str, List[dict]]:
+    # { "Root Files": [{"name": "index.html", "url": "...", "icon": "🌐"}], ... }
     grouped = {"Root Files": []}
-    
-    # Pre-calculate project name
-    project_name = project_path.name
     
     for root, dirs, files in os.walk(project_path):
         rel_root = Path(root).relative_to(project_path)
@@ -16,58 +21,80 @@ def generate_links_grouped(project_path: Path, base_url: str, spec) -> Dict[str,
         # Filter directories in place
         dirs[:] = [d for d in dirs if not is_ignored(Path(root) / d, project_path, spec)]
         
-        # Sort files to ensure deterministic order
+        # Sort files
         files.sort()
         
         for f in files:
-            file_path = Path(root) / f
-            if is_ignored(file_path, project_path, spec):
+            full_file_path = Path(root) / f
+            if is_ignored(full_file_path, project_path, spec):
                 continue
             
-            rel_file = file_path.relative_to(project_path)
+            rel_file = full_file_path.relative_to(project_path)
             url = base_url + str(rel_file).replace("\\", "/")
             
+            # Get icon
+            icon = get_file_icon(full_file_path, icons_config)
+            
+            item = {
+                "name": f,
+                "url": url,
+                "icon": icon
+            }
+            
             if rel_root == Path("."):
-                grouped["Root Files"].append(url)
+                grouped["Root Files"].append(item)
             else:
-                # Use relative root string as key
                 dir_key = str(rel_root).replace("\\", "/")
                 if dir_key not in grouped:
                     grouped[dir_key] = []
-                grouped[dir_key].append(url)
+                grouped[dir_key].append(item)
                 
     return grouped
 
 def write_link_md(project_path: Path, base_url: str, spec):
-    grouped = generate_links_grouped(project_path, base_url, spec)
+    config = load_config()
+    icons_config = config.get("icons", {})
+    project_icon = config.get("project_icon", "🚀")
+    link_icon = config.get("link_icon", "🔗")
+    folder_icon = config.get("folder_icon", "📁")
+    
+    grouped = generate_links_grouped(project_path, base_url, spec, icons_config)
+    
     project_name = project_path.name
     
     lines = []
-    lines.append(f"# {project_name}")
+    lines.append(f"# {project_icon} {project_name}")
     lines.append("")
-    lines.append(f"> {base_url}")
+    lines.append(f"> {link_icon} {base_url}")
     lines.append("")
     
-    # 1. Root Files
-    if grouped["Root Files"]:
-        lines.append("## Root Files")
+    # Helper to append group
+    def append_group(group_name: str, items: List[dict]):
+        if not items:
+            return
+        
+        display_name = group_name
+        if folder_icon:
+            display_name = f"{folder_icon} {group_name}"
+            
+        lines.append(f"## {display_name}")
         lines.append("")
-        for url in grouped["Root Files"]:
-            lines.append("```text")
-            lines.append(url)
-            lines.append("```")
+        for item in items:
+            icon_str = f"{item['icon']} " if item['icon'] else ""
+            lines.append(f"- {icon_str}{item['name']}")
             lines.append("")
+            lines.append("  ```text")
+            lines.append(f"  {item['url']}")
+            lines.append("  ```")
+            lines.append("")
+
+    # 1. Root Files
+    append_group("Root Files", grouped["Root Files"])
             
     # 2. Other directories
     sorted_dirs = sorted([k for k in grouped.keys() if k != "Root Files"])
     for d in sorted_dirs:
-        lines.append(f"## {d}")
-        lines.append("")
-        for url in grouped[d]:
-            lines.append("```text")
-            lines.append(url)
-            lines.append("```")
-            lines.append("")
+        append_group(d, grouped[d])
             
     link_md_path = project_path / "link.md"
     link_md_path.write_text("\n".join(lines), encoding="utf-8")
