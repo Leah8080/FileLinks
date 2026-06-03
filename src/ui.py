@@ -31,13 +31,19 @@ def print_summary(total: int, links: int, filtered: int):
     table.add_row("已过滤", str(filtered))
     console.print(table)
 
-def print_menu(title: str, options: list):
+def print_menu(title: str, options: list, start_index: int = 1):
     """
     打印一个带标题的菜单
     """
     menu_text = ""
-    for i, option in enumerate(options, 1):
-        menu_text += f"[bold blue]{i}.[/bold blue] {option}\n"
+    for i, option in enumerate(options):
+        # 如果是最后一个选项且 start_index 为 1，且用户想要 0 退出，这里需要特殊逻辑
+        # 但更通用的做法是让调用者决定。
+        # 简单处理：如果 start_index 是 1 且选项中有“退出”，我们将序号设为 0
+        idx = i + start_index
+        if "退出" in option:
+            idx = 0
+        menu_text += f"[bold blue]{idx}.[/bold blue] {option}\n"
     
     console.print(Panel(menu_text.strip(), title=f"[bold cyan]{title}[/bold cyan]", border_style="cyan", expand=False))
 
@@ -46,7 +52,7 @@ def ask_input(prompt: str) -> str:
 
 def print_header(title: str):
     from rich.align import Align
-    console.print(Panel(Align.center(f"[bold magenta]{title}[/bold magenta]"), style="bold blue", expand=True))
+    console.print(Panel(Align.center(f"[bold magenta]{title}[/bold magenta]"), style="bold blue", expand=False))
 
 def print_server_info(protocol: str, config: dict):
     table = Table(title=f"🖥️ 目标服务器信息 ({protocol.upper()})", show_header=False, border_style="yellow")

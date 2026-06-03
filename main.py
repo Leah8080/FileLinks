@@ -16,6 +16,24 @@ def clear_screen():
     """清屏函数，兼容Windows和Linux/Mac"""
     os.system('cls' if os.name == 'nt' else 'clear')
 
+def generate_links_workflow(project_path):
+    # 生成链接逻辑封装
+    print_step(f"处理项目: {project_path}")
+    
+    # 1. 获取并规范化网站 URL
+    print_step("提取项目网站链接...")
+    base_url = get_site_url(project_path)
+    print_info(f"网站链接: {base_url}")
+    
+    # 2. 获取忽略配置并确保 link.md 被忽略
+    spec = get_ignore_spec(project_path)
+    
+    # 3. 生成并写入 link.md
+    print_step("生成网站文件访问链接...")
+    write_link_md(project_path, base_url, spec)
+    
+    print_success("链接生成完成！")
+
 def main():
     header_title = "🌐 网站文件管理工具"
     try:
@@ -44,7 +62,7 @@ def main():
             options = ["同步文件", "生成链接", "退出脚本"]
             print_menu("文件管理菜单", options)
             
-            choice = ask_input("请选择操作 (1-3): ")
+            choice = ask_input("请选择操作 (0-2): ")
             
             if choice == "1":
                 # 同步文件
@@ -52,30 +70,24 @@ def main():
                 try:
                     spec = get_ignore_spec(project_path)
                     sync_files(project_path, spec)
+                    
+                    # 同步成功后询问是否生成链接
+                    from src.ui import ask_confirm
+                    if ask_confirm("同步完成，是否立即生成文件链接?"):
+                        generate_links_workflow(project_path)
                 except Exception as e:
                     print_error(f"同步失败: {e}")
                 input("\n按回车键继续...")
                 
             elif choice == "2":
                 # 生成链接
-                print_step(f"处理项目: {project_path}")
-                
-                # 1. 获取并规范化网站 URL
-                print_step("提取项目网站链接...")
-                base_url = get_site_url(project_path)
-                print_info(f"网站链接: {base_url}")
-                
-                # 2. 获取忽略配置并确保 link.md 被忽略
-                spec = get_ignore_spec(project_path)
-                
-                # 3. 生成并写入 link.md
-                print_step("生成网站文件访问链接...")
-                write_link_md(project_path, base_url, spec)
-                
-                print_success("处理完成！")
+                try:
+                    generate_links_workflow(project_path)
+                except Exception as e:
+                    print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
                 
-            elif choice == "3":
+            elif choice == "0":
                 print_info("退出脚本，再见！")
                 break
             else:
