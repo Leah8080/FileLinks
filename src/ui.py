@@ -45,7 +45,8 @@ def ask_input(prompt: str) -> str:
     return Prompt.ask(f"[bold cyan]✏️  {prompt}[/bold cyan]")
 
 def print_header(title: str):
-    console.print(Panel(f"[bold magenta]{title}[/bold magenta]", style="bold blue", expand=True, align="center"))
+    from rich.align import Align
+    console.print(Panel(Align.center(f"[bold magenta]{title}[/bold magenta]"), style="bold blue", expand=True))
 
 def print_server_info(protocol: str, config: dict):
     table = Table(title=f"🖥️ 目标服务器信息 ({protocol.upper()})", show_header=False, border_style="yellow")

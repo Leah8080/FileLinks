@@ -133,7 +133,7 @@ def sync_ftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
     port = config.get("port", 21)
     user = config.get("user")
     password = config.get("password")
-    remote_path = config.get("remote_path", "/")
+    remote_path = config.get("remote_path")
     timeout = config.get("timeout", 30)
 
     try:
@@ -141,6 +141,11 @@ def sync_ftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
             ftp.connect(host, port, timeout=timeout)
             ftp.login(user, password)
             print_success(f"已连接到 FTP 服务器: {host}")
+            
+            # 如果 remote_path 为空，获取当前工作目录
+            if not remote_path:
+                remote_path = ftp.pwd()
+                print_info(f"未指定远程路径，自动获取当前目录: {remote_path}")
             
             # 确保远程根目录存在
             ensure_remote_dir_ftp(ftp, remote_path)
@@ -202,13 +207,18 @@ def sync_sftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
     port = config.get("port", 22)
     user = config.get("user")
     password = config.get("password")
-    remote_path = config.get("remote_path", "/")
+    remote_path = config.get("remote_path")
     
     try:
         transport = paramiko.Transport((host, port))
         transport.connect(username=user, password=password)
         sftp = paramiko.SFTPClient.from_transport(transport)
         print_success(f"已连接到 SFTP 服务器: {host}")
+        
+        # 如果 remote_path 为空，获取当前工作目录
+        if not remote_path:
+            remote_path = sftp.normalize('.')
+            print_info(f"未指定远程路径，自动获取当前目录: {remote_path}")
         
         # 确保远程根目录存在
         ensure_remote_dir_sftp(sftp, remote_path)
