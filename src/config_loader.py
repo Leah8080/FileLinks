@@ -3,16 +3,13 @@ from pathlib import Path
 
 # 定义默认配置，确保程序在配置缺失时仍能运行
 DEFAULT_CONFIG = {
+    "ignore": [
+        ".gitignore",
+        ".surgeignore"
+    ],
     "project_icon": "🚀",
     "link_icon": "🔗",
     "folder_icon": "📁",
-    "ignore": [
-        ".git/",
-        ".gitignore",
-        ".surgeignore",
-        "config.json",
-        "CNAME"
-    ],
     "icons": {
         ".html": "🌐",
         ".js": "📜",
