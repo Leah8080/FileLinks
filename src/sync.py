@@ -1,6 +1,7 @@
 import os
 import json
 import ftplib
+import stat
 from pathlib import Path
 import pathspec
 from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, ask_confirm, console
@@ -13,7 +14,6 @@ def generate_tree(path: Path, project_root: Path, spec, tree=None):
     if tree is None:
         tree = Tree(f"[bold blue]📁 {path.name}[/bold blue]")
     
-    # 排序：文件夹在前，文件在后
     items = sorted(list(path.iterdir()), key=lambda x: (not x.is_dir(), x.name.lower()))
     
     for item in items:
@@ -65,20 +65,16 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         
     config = config_all[protocol]
 
-    # 1. 显示服务器信息
     print_server_info(protocol, config)
     
-    # 2. 统计并显示本地待同步信息
     print_step("正在分析本地待同步文件...")
     file_count, dir_count = count_local_items(project_path, project_path, spec)
     print_info(f"待同步: [bold]{file_count}[/bold] 个文件, [bold]{dir_count}[/bold] 个文件夹")
     
-    # 3. 显示目录树
     print_step("待同步目录结构:")
     tree = generate_tree(project_path, project_path, spec)
     console.print(tree)
     
-    # 4. 用户确认
     if not ask_confirm("确认开始同步到服务器吗?"):
         print_warning("已取消同步操作。")
         return
@@ -89,7 +85,6 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         sync_sftp(project_path, config, spec)
 
 def ensure_remote_dir_ftp(ftp, path):
-    """确保远程 FTP 目录存在"""
     parts = path.strip("/").split("/")
     current = ""
     for part in parts:
@@ -105,7 +100,6 @@ def ensure_remote_dir_ftp(ftp, path):
                 print_error(f"创建目录失败: {current}, 错误: {e}")
 
 def upload_recursive_ftp(ftp, local_path, project_root, remote_root, spec):
-    """递归上传文件到 FTP"""
     for item in local_path.iterdir():
         if is_ignored(item, project_root, spec, item.is_dir()):
             continue
@@ -117,7 +111,7 @@ def upload_recursive_ftp(ftp, local_path, project_root, remote_root, spec):
             try:
                 ftp.mkd(remote_file_path)
             except ftplib.error_perm:
-                pass # 目录可能已存在
+                pass 
             upload_recursive_ftp(ftp, item, project_root, remote_root, spec)
         else:
             print_info(f"正在上传: {rel_path}")
@@ -142,72 +136,75 @@ def sync_ftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
             ftp.login(user, password)
             print_success(f"已连接到 FTP 服务器: {host}")
             
-            # 如果 remote_path 为空，获取当前工作目录
             if not remote_path:
                 remote_path = ftp.pwd()
                 print_info(f"未指定远程路径，自动获取当前目录: {remote_path}")
             
-            # 确保远程根目录存在
             ensure_remote_dir_ftp(ftp, remote_path)
-            
-            # 开始递归同步
             upload_recursive_ftp(ftp, project_path, project_path, remote_path, spec)
             
-            # 开始清理多余文件
             print_step("正在清理远程多余文件...")
-            cleanup_remote_ftp(ftp, project_path, remote_path, spec)
+            cleanup_remote_ftp(ftp, project_path, remote_path, remote_path, spec)
             
             print_success("FTP 同步完成！")
     except Exception as e:
         print_error(f"FTP 同步过程中出错: {e}")
 
-def cleanup_remote_ftp(ftp, local_root, remote_root, spec):
-    """递归删除远程服务器上多余的文件和目录"""
+def cleanup_remote_ftp(ftp, local_root, current_remote, base_remote, spec):
+    """递归清理远程多余文件"""
     try:
-        items = ftp.nlst(remote_root)
-    except ftplib.error_perm:
-        return # 目录为空或不存在
-
-    for remote_item_path in items:
-        # 获取相对于远程根目录的路径
         try:
-            rel_path = Path(remote_item_path).relative_to(remote_root)
-        except ValueError:
-            # 有些 FTP 返回的是绝对路径，有些是相对路径
-            rel_path = Path(remote_item_path.replace(remote_root, "", 1).strip("/"))
-            
-        local_item_path = local_root / rel_path
-        
-        # 判断远程项是文件还是目录 (FTP 比较麻烦，尝试进入目录)
-        is_dir = False
-        try:
-            ftp.cwd(remote_item_path)
-            ftp.cwd("..") # 能够进入说明是目录
-            is_dir = True
+            items = ftp.nlst(current_remote)
         except ftplib.error_perm:
-            is_dir = False
+            return
 
-        if is_dir:
-            # 递归清理子目录
-            cleanup_remote_ftp(ftp, local_root, remote_item_path, spec)
-            # 如果本地不存在该目录且未被忽略，则删除
-            if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, True):
-                print_warning(f"正在删除远程目录: {rel_path}")
-                try:
-                    ftp.rmd(remote_item_path)
-                except Exception as e:
-                    print_error(f"删除目录失败: {rel_path}, {e}")
-        else:
-            # 如果本地不存在该文件且未被忽略，则删除
-            if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, False):
-                print_warning(f"正在删除远程文件: {rel_path}")
-                try:
-                    ftp.delete(remote_item_path)
-                except Exception as e:
-                    print_error(f"删除文件失败: {rel_path}, {e}")
+        for remote_item_path in items:
+            # 统一路径格式
+            remote_item_path = remote_item_path.replace("\\", "/")
+            name = Path(remote_item_path).name
+            if name in (".", ".."): continue
+
+            # 确保获取的是绝对路径
+            if not remote_item_path.startswith("/"):
+                remote_item_path = (Path(current_remote) / name).as_posix()
+
+            # 计算相对于 base_remote 的路径，以映射本地路径
+            try:
+                rel_path = Path(remote_item_path).relative_to(base_remote)
+            except ValueError:
+                # 兼容不同服务器返回的路径格式
+                rel_path = Path(remote_item_path.replace(base_remote, "", 1).lstrip("/"))
+                
+            local_item_path = local_root / rel_path
+
+            # 判断类型
+            is_dir = False
+            try:
+                ftp.cwd(remote_item_path)
+                ftp.cwd("/") # 先回根目录防止路径混淆
+                is_dir = True
+            except ftplib.error_perm:
+                is_dir = False
+
+            if is_dir:
+                cleanup_remote_ftp(ftp, local_root, remote_item_path, base_remote, spec)
+                if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, True):
+                    print_warning(f"正在删除远程目录: {rel_path}")
+                    try:
+                        ftp.rmd(remote_item_path)
+                    except Exception as e:
+                        print_error(f"删除目录失败: {rel_path}, {e}")
+            else:
+                if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, False):
+                    print_warning(f"正在删除远程文件: {rel_path}")
+                    try:
+                        ftp.delete(remote_item_path)
+                    except Exception as e:
+                        print_error(f"删除文件失败: {rel_path}, {e}")
+    except Exception as e:
+        print_error(f"清理远程文件时出错: {e}")
 
 def ensure_remote_dir_sftp(sftp, path):
-    """确保远程 SFTP 目录存在"""
     parts = path.strip("/").split("/")
     current = ""
     for part in parts:
@@ -223,7 +220,6 @@ def ensure_remote_dir_sftp(sftp, path):
                 print_error(f"创建目录失败: {current}, 错误: {e}")
 
 def upload_recursive_sftp(sftp, local_path, project_root, remote_root, spec):
-    """递归上传文件到 SFTP"""
     for item in local_path.iterdir():
         if is_ignored(item, project_root, spec, item.is_dir()):
             continue
@@ -248,7 +244,7 @@ def sync_sftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
     try:
         import paramiko
     except ImportError:
-        print_error("缺少 paramiko 库，请运行 'pip install paramiko' 以支持 SFTP。")
+        print_error("缺少 paramiko 库，请运行 'uv add paramiko' 以支持 SFTP。")
         return
 
     print_info("使用 SFTP 协议同步...")
@@ -264,58 +260,50 @@ def sync_sftp(project_path: Path, config: dict, spec: pathspec.PathSpec):
         sftp = paramiko.SFTPClient.from_transport(transport)
         print_success(f"已连接到 SFTP 服务器: {host}")
         
-        # 如果 remote_path 为空，获取当前工作目录
         if not remote_path:
             remote_path = sftp.normalize('.')
             print_info(f"未指定远程路径，自动获取当前目录: {remote_path}")
         
-        # 确保远程根目录存在
         ensure_remote_dir_sftp(sftp, remote_path)
-        
-        # 开始递归同步
         upload_recursive_sftp(sftp, project_path, project_path, remote_path, spec)
         
-        # 开始清理多余文件
         print_step("正在清理远程多余文件...")
-        cleanup_remote_sftp(sftp, project_path, remote_path, spec)
+        cleanup_remote_sftp(sftp, project_path, remote_path, remote_path, spec)
         
         print_success("SFTP 同步完成！")
-        
         sftp.close()
         transport.close()
     except Exception as e:
         print_error(f"SFTP 同步过程中出错: {e}")
 
-def cleanup_remote_sftp(sftp, local_root, remote_root, spec):
-    """递归删除远程 SFTP 服务器上多余的文件 and 目录"""
-    import stat
+def cleanup_remote_sftp(sftp, local_root, current_remote, base_remote, spec):
+    """递归清理远程多余文件 (SFTP)"""
     try:
-        items = sftp.listdir_attr(remote_root)
-    except IOError:
-        return
+        items = sftp.listdir_attr(current_remote)
+        for item in items:
+            name = item.filename
+            if name in (".", ".."): continue
+            
+            remote_item_path = (Path(current_remote) / name).as_posix()
+            rel_path = Path(remote_item_path).relative_to(base_remote)
+            local_item_path = local_root / rel_path
+            
+            is_dir = stat.S_ISDIR(item.st_mode)
 
-    for item in items:
-        remote_item_path = (Path(remote_root) / item.filename).as_posix()
-        rel_path = Path(remote_item_path).relative_to(remote_root)
-        local_item_path = local_root / rel_path
-        
-        is_dir = stat.S_ISDIR(item.st_mode)
-
-        if is_dir:
-            # 递归清理子目录
-            cleanup_remote_sftp(sftp, local_root, remote_item_path, spec)
-            # 如果本地不存在该目录且未被忽略，则删除
-            if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, True):
-                print_warning(f"正在删除远程目录: {rel_path}")
-                try:
-                    sftp.rmdir(remote_item_path)
-                except Exception as e:
-                    print_error(f"删除目录失败: {rel_path}, {e}")
-        else:
-            # 如果本地不存在该文件且未被忽略，则删除
-            if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, False):
-                print_warning(f"正在删除远程文件: {rel_path}")
-                try:
-                    sftp.remove(remote_item_path)
-                except Exception as e:
-                    print_error(f"删除文件失败: {rel_path}, {e}")
+            if is_dir:
+                cleanup_remote_sftp(sftp, local_root, remote_item_path, base_remote, spec)
+                if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, True):
+                    print_warning(f"正在删除远程目录: {rel_path}")
+                    try:
+                        sftp.rmdir(remote_item_path)
+                    except Exception as e:
+                        print_error(f"删除目录失败: {rel_path}, {e}")
+            else:
+                if not local_item_path.exists() and not is_ignored(local_item_path, local_root, spec, False):
+                    print_warning(f"正在删除远程文件: {rel_path}")
+                    try:
+                        sftp.remove(remote_item_path)
+                    except Exception as e:
+                        print_error(f"删除文件失败: {rel_path}, {e}")
+    except Exception as e:
+        print_error(f"清理远程文件时出错: {e}")
