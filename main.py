@@ -9,24 +9,18 @@ from pathlib import Path
 from src.site_info import get_site_url
 from src.filter import get_ignore_spec
 from src.link_gen import write_link_md
-from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu
+from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu, print_header
 from src.sync import sync_files
-
-def print_header():
-    """打印菜单头部"""
-    print("=" * 40)
-    print("         🌐 网站文件管理工具")
-    print("=" * 40)
-    print()
 
 def clear_screen():
     """清屏函数，兼容Windows和Linux/Mac"""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def main():
+    header_title = "🌐 网站文件管理工具"
     try:
         clear_screen()
-        print_header()
+        print_header(header_title)
         
         while True:
             path_input = ask_input("请输入网站项目路径: ")
@@ -44,7 +38,7 @@ def main():
 
         while True:
             clear_screen()
-            print_header()
+            print_header(header_title)
             print_info(f"当前项目: {project_path}")
             
             options = ["同步文件", "生成链接", "退出脚本"]

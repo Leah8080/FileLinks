@@ -1,42 +1,47 @@
-import sys
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.prompt import Prompt
+from rich import print as rprint
 
-# ANSI Color constants
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-BLUE = "\033[34m"
-CYAN = "\033[36m"
-RED = "\033[31m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
+console = Console()
 
 def print_success(message: str):
-    print(f"{GREEN}✅ {message}{RESET}")
+    console.print(f"[bold green]✅ {message}[/bold green]")
 
 def print_info(message: str):
-    print(f"{CYAN}📝 {message}{RESET}")
+    console.print(f"[cyan]📝 {message}[/cyan]")
 
 def print_warning(message: str):
-    print(f"{YELLOW}🚨 {message}{RESET}")
+    console.print(f"[bold yellow]🚨 {message}[/bold yellow]")
 
 def print_error(message: str):
-    print(f"{RED}❌ {message}{RESET}")
+    console.print(f"[bold red]❌ {message}[/bold red]")
 
 def print_step(message: str):
-    print(f"\n{BOLD}{BLUE}➡️ {message}{RESET}")
+    console.print(f"\n[bold blue]➡️  {message}[/bold blue]")
 
 def print_summary(total: int, links: int, filtered: int):
-    print(f"{BOLD}{CYAN}📊 摘要信息：文件: {total} | 链接: {links} | 过滤: {filtered}{RESET}")
+    table = Table(title="📊 摘要信息", show_header=True, header_style="bold magenta")
+    table.add_column("分类", style="dim")
+    table.add_column("数量", justify="right")
+    table.add_row("文件总数", str(total))
+    table.add_row("生成链接", str(links))
+    table.add_row("已过滤", str(filtered))
+    console.print(table)
 
 def print_menu(title: str, options: list):
     """
     打印一个带标题的菜单
     """
-    print(f"\n{BOLD}{CYAN}=== {title} ==={RESET}")
+    menu_text = ""
     for i, option in enumerate(options, 1):
-        print(f"{BOLD}{BLUE}{i}.{RESET} {option}")
-    print(f"{BOLD}{CYAN}=" * (len(title) + 8) + f"{RESET}")
+        menu_text += f"[bold blue]{i}.[/bold blue] {option}\n"
+    
+    console.print(Panel(menu_text.strip(), title=f"[bold cyan]{title}[/bold cyan]", border_style="cyan", expand=False))
 
 def ask_input(prompt: str) -> str:
-    print(f"{BOLD}{CYAN}✏️ {prompt}{RESET}", end="")
-    return input().strip()
+    return Prompt.ask(f"[bold cyan]✏️  {prompt}[/bold cyan]")
+
+def print_header(title: str):
+    console.print(Panel(f"[bold magenta]{title}[/bold magenta]", style="bold blue", expand=True, align="center"))
