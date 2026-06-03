@@ -277,17 +277,36 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
 
     try:
         if protocol == "ftp":
-            run_ftp_plan(project_path, config, plan)
+            failed_files = run_ftp_plan(project_path, config, plan)
         else:
-            run_sftp_plan(project_path, config, plan)
+            failed_files = run_sftp_plan(project_path, config, plan)
         
-        save_sync_state(project_path, local_struct)
-        return True
+        # 即使部分文件失败，也要更新成功上传的文件的状态缓存
+        success_struct = local_struct.copy()
+        for failed_path, _ in failed_files:
+            if failed_path in success_struct:
+                if failed_path in cache_struct:
+                    success_struct[failed_path] = cache_struct[failed_path]
+                else:
+                    del success_struct[failed_path]
+        
+        save_sync_state(project_path, success_struct)
+        
+        # 最终汇总报告
+        if failed_files:
+            print_warning("\n⚠️ 同步完成，但以下文件处理失败：")
+            for path, err in failed_files:
+                print_error(f"  - {path} : {err}")
+            return False
+        else:
+            print_success("\n🎉 所有文件同步成功！")
+            return True
     except Exception as e:
         print_error(f"同步失败: {e}")
         return False
 
 def run_ftp_plan(project_root, config, plan):
+    failed_files = []
     with ftplib.FTP() as ftp:
         ftp.set_pasv(True)
         ftp.connect(config["host"], config.get("port", 21), timeout=60)
@@ -309,7 +328,9 @@ def run_ftp_plan(project_root, config, plan):
                     remote_file = normalize_path(f"{base}/{path}")
                     if local_file.is_dir():
                         try: ftp.mkd(remote_file)
-                        except: pass
+                        except Exception as e:
+                            print_error(f"创建远程目录失败 {path}: {e}")
+                            failed_files.append((path, f"创建目录失败: {e}"))
                     else:
                         task = progress.add_task(f"上传 {path}", total=local_file.stat().st_size)
                         ensure_remote_dir_ftp(ftp, normalize_path(os.path.dirname(remote_file)))
@@ -325,14 +346,20 @@ def run_ftp_plan(project_root, config, plan):
                                         ftp.storbinary(f"STOR {remote_file}", f, callback=lambda chunk: progress.update(task, advance=len(chunk)))
                                 except Exception as retry_err:
                                     progress.remove_task(task)
-                                    raise Exception(f"无法上传文件 {path} (权限错误，重试失败): {retry_err}")
+                                    print_error(f"上传失败 {path}: 权限错误，重试失败: {retry_err}")
+                                    failed_files.append((path, f"权限错误，重试失败: {retry_err}"))
+                                else:
+                                    progress.remove_task(task)
                             else:
                                 progress.remove_task(task)
-                                raise e
+                                print_error(f"上传失败 {path}: {e}")
+                                failed_files.append((path, str(e)))
                         except Exception as e:
                             progress.remove_task(task)
-                            raise e
-                        progress.remove_task(task)
+                            print_error(f"上传失败 {path}: {e}")
+                            failed_files.append((path, str(e)))
+                        else:
+                            progress.remove_task(task)
         
     if plan["delete"]:
         print_step("正在清理远程多余文件...")
@@ -351,14 +378,17 @@ def run_ftp_plan(project_root, config, plan):
                         try:
                             ftp.rmd(remote_item)
                             print_warning(f"已删除目录: {path}")
-                        except:
-                            pass
+                        except Exception as e2:
+                            print_error(f"删除失败 {path}: {e2}")
+                            failed_files.append((path, f"删除失败: {e2}"))
         except Exception as e:
             print_error(f"清理阶段连接失败: {e}")
-                    
-    print_success("FTP 同步完成！")
+            for path in reversed(plan["delete"]):
+                failed_files.append((path, f"清理阶段连接失败: {e}"))
+    return failed_files
 
 def run_sftp_plan(project_root, config, plan):
+    failed_files = []
     import paramiko
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -381,12 +411,19 @@ def run_sftp_plan(project_root, config, plan):
                 remote_file = normalize_path(f"{base}/{path}")
                 if local_file.is_dir():
                     try: sftp.mkdir(remote_file)
-                    except: pass
+                    except Exception as e:
+                        print_error(f"创建远程目录失败 {path}: {e}")
+                        failed_files.append((path, f"创建目录失败: {e}"))
                 else:
                     task = progress.add_task(f"上传 {path}", total=local_file.stat().st_size)
                     ensure_remote_dir_sftp(sftp, normalize_path(os.path.dirname(remote_file)))
-                    sftp.put(str(local_file), remote_file, callback=lambda cur, tot: progress.update(task, completed=cur))
-                    progress.remove_task(task)
+                    try:
+                        sftp.put(str(local_file), remote_file, callback=lambda cur, tot: progress.update(task, completed=cur))
+                    except Exception as e:
+                        print_error(f"上传失败 {path}: {e}")
+                        failed_files.append((path, str(e)))
+                    finally:
+                        progress.remove_task(task)
             
     if plan["delete"]:
         print_step("正在清理远程多余文件...")
@@ -395,15 +432,16 @@ def run_sftp_plan(project_root, config, plan):
             try:
                 sftp.remove(remote_item)
                 print_warning(f"已删除: {path}")
-            except:
+            except Exception as e:
                 try:
                     sftp.rmdir(remote_item)
                     print_warning(f"已删除目录: {path}")
-                except:
-                    pass
+                except Exception as e2:
+                    print_error(f"删除失败 {path}: {e2}")
+                    failed_files.append((path, f"删除失败: {e2}"))
                 
     sftp.close(); ssh.close()
-    print_success("SFTP 同步完成！")
+    return failed_files
 
 def ensure_remote_dir_ftp(ftp, path):
     if path == "/": return
