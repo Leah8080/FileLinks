@@ -3,8 +3,24 @@ import json
 import ftplib
 from pathlib import Path
 import pathspec
-from src.ui import print_info, print_success, print_error, print_warning, print_step
+from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, generate_tree, ask_confirm, console
 from src.filter import is_ignored
+
+def count_local_items(path: Path, project_root: Path, spec):
+    """统计待同步的文件和文件夹数量"""
+    file_count = 0
+    dir_count = 0
+    for item in path.iterdir():
+        if is_ignored(item, project_root, spec, item.is_dir()):
+            continue
+        if item.is_dir():
+            dir_count += 1
+            sub_files, sub_dirs = count_local_items(item, project_root, spec)
+            file_count += sub_files
+            dir_count += sub_dirs
+        else:
+            file_count += 1
+    return file_count, dir_count
 
 def load_server_config(project_path: Path):
     server_json_path = project_path / "server.json"
@@ -16,17 +32,40 @@ def load_server_config(project_path: Path):
 
 def sync_files(project_path: Path, spec: pathspec.PathSpec):
     try:
-        config = load_server_config(project_path)
+        config_all = load_server_config(project_path)
     except Exception as e:
         print_error(f"加载 server.json 失败: {e}")
         return
 
-    if "ftp" in config:
-        sync_ftp(project_path, config["ftp"], spec)
-    elif "sftp" in config:
-        sync_sftp(project_path, config["sftp"], spec)
-    else:
+    protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
+    if not protocol:
         print_error("server.json 中未找到 'ftp' 或 'sftp' 配置")
+        return
+        
+    config = config_all[protocol]
+
+    # 1. 显示服务器信息
+    print_server_info(protocol, config)
+    
+    # 2. 统计并显示本地待同步信息
+    print_step("正在分析本地待同步文件...")
+    file_count, dir_count = count_local_items(project_path, project_path, spec)
+    print_info(f"待同步: [bold]{file_count}[/bold] 个文件, [bold]{dir_count}[/bold] 个文件夹")
+    
+    # 3. 显示目录树
+    print_step("待同步目录结构:")
+    tree = generate_tree(project_path, project_path, spec)
+    console.print(tree)
+    
+    # 4. 用户确认
+    if not ask_confirm("确认开始同步到服务器吗?"):
+        print_warning("已取消同步操作。")
+        return
+
+    if protocol == "ftp":
+        sync_ftp(project_path, config, spec)
+    else:
+        sync_sftp(project_path, config, spec)
 
 def ensure_remote_dir_ftp(ftp, path):
     """确保远程 FTP 目录存在"""
