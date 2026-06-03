@@ -23,10 +23,30 @@ def get_local_structure(path: Path, project_root: Path, spec):
     return structure
 
 def get_remote_structure_ftp(ftp, current_remote, base_remote):
-    """递归获取 FTP 远程结构"""
+    """递归获取 FTP 远程结构 (优化版)"""
     structure = {}
     try:
-        items = ftp.nlst(current_remote)
+        # 优先尝试使用 mlsd (RFC 3659)，这可以一次性获取类型和大小
+        try:
+            for name, facts in ftp.mlsd(current_remote):
+                if name in (".", ".."): continue
+                
+                remote_item_path = (Path(current_remote) / name).as_posix()
+                try:
+                    rel_path = Path(remote_item_path).relative_to(base_remote).as_posix()
+                except ValueError:
+                    rel_path = remote_item_path.replace(base_remote, "", 1).lstrip("/")
+
+                if facts['type'] == 'dir':
+                    structure[rel_path] = {"type": "dir", "size": 0}
+                    structure.update(get_remote_structure_ftp(ftp, remote_item_path, base_remote))
+                else:
+                    size = int(facts.get('size', 0))
+                    structure[rel_path] = {"type": "file", "size": size}
+            return structure
+        except (ftplib.error_perm, AttributeError):
+            # 如果服务器不支持 mlsd，退回到 nlst
+            items = ftp.nlst(current_remote)
     except ftplib.error_perm:
         return {}
 
@@ -43,18 +63,14 @@ def get_remote_structure_ftp(ftp, current_remote, base_remote):
         except ValueError:
             rel_path = remote_item_path.replace(base_remote, "", 1).lstrip("/")
 
+        # 退而求其次的类型判断方法
         is_dir = False
         size = 0
         try:
-            ftp.cwd(remote_item_path)
-            ftp.cwd("/") 
-            is_dir = True
+            # 尝试获取大小，如果报错通常是目录
+            size = ftp.size(remote_item_path) or 0
         except ftplib.error_perm:
-            is_dir = False
-            try:
-                size = ftp.size(remote_item_path) or 0
-            except:
-                size = 0
+            is_dir = True
 
         if is_dir:
             structure[rel_path] = {"type": "dir", "size": 0}
@@ -95,7 +111,7 @@ def generate_sync_tree(local_struct, remote_struct, project_name):
     """生成包含同步状态的 Rich 目录树"""
     from rich.tree import Tree
     
-    tree = Tree(f"[bold blue]📁 {project_name}[/bold blue] [dim](对比预览)[/dim]")
+    tree = Tree(f"[bold blue]📁 {project_name}[/bold blue] [dim](同步预览)[/dim]")
     
     all_paths = sorted(list(set(local_struct.keys()) | set(remote_struct.keys())))
     nodes = {"": tree}
@@ -178,7 +194,7 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
             sftp.close()
             transport.close()
     except Exception as e:
-        print_error(f"获取远程结构失败: {e}")
+        print_error(f"分析失败: {e}")
         if not ask_confirm("无法完整获取远程结构，是否直接开始强制同步?"):
             return
 
@@ -285,11 +301,10 @@ def cleanup_remote_ftp(ftp, local_root, current_remote, base_remote, spec):
 
             is_dir = False
             try:
-                ftp.cwd(remote_item_path)
-                ftp.cwd("/") 
-                is_dir = True
+                # 依然尝试用 size 来判断文件/目录，减少 cwd 交互
+                ftp.size(remote_item_path)
             except ftplib.error_perm:
-                is_dir = False
+                is_dir = True
 
             if is_dir:
                 cleanup_remote_ftp(ftp, local_root, remote_item_path, base_remote, spec)
