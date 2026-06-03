@@ -9,12 +9,54 @@ from pathlib import Path
 from src.site_info import get_site_url
 from src.filter import get_ignore_spec
 from src.link_gen import write_link_md
-from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu, print_header
+from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu, print_header, print_history_table
 from src.sync import sync_files
+from src.history_manager import load_history, save_history
 
 def clear_screen():
     """清屏函数，兼容Windows和Linux/Mac"""
     os.system('cls' if os.name == 'nt' else 'clear')
+
+def select_project_workflow(header_title):
+    """选择项目路径工作流"""
+    while True:
+        clear_screen()
+        print_header(header_title)
+        
+        history = load_history()
+        if history:
+            print_history_table(history)
+            prompt_msg = "请输入序号选择历史项目，或输入新的项目路径"
+        else:
+            prompt_msg = "请输入网站项目路径"
+            
+        path_input = ask_input(prompt_msg)
+        
+        if not path_input:
+            print_error("输入不能为空，请重新输入...")
+            input("\n按回车键继续...")
+            continue
+        
+        # 尝试作为序号解析
+        if path_input.isdigit():
+            idx = int(path_input) - 1
+            if 0 <= idx < len(history):
+                project_path = Path(history[idx]['path'])
+            else:
+                print_error("无效的序号，请重新输入...")
+                input("\n按回车键继续...")
+                continue
+        else:
+            project_path = Path(path_input).resolve()
+            
+        if not project_path.exists() or not project_path.is_dir():
+            print_error(f"不是有效的目录: {project_path}")
+            input("\n按回车键继续...")
+            continue
+        
+        # 保存到历史记录
+        save_history(str(project_path))
+        return project_path
 
 def generate_links_workflow(project_path):
     # 生成链接逻辑封装

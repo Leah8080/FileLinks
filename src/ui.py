@@ -54,6 +54,23 @@ def print_header(title: str):
     from rich.align import Align
     console.print(Panel(Align.center(f"[bold magenta]{title}[/bold magenta]"), style="bold blue", expand=False))
 
+def print_history_table(history: list):
+    """
+    打印历史项目列表
+    """
+    if not history:
+        return
+    
+    table = Table(title="📜 历史项目", show_header=True, header_style="bold cyan")
+    table.add_column("#", justify="center", style="dim")
+    table.add_column("路径", style="green")
+    table.add_column("日期", justify="center", style="blue")
+    
+    for i, item in enumerate(history):
+        table.add_row(str(i + 1), item['path'], item['date'])
+    
+    console.print(table)
+
 def print_server_info(protocol: str, config: dict):
     table = Table(title=f"🖥️ 目标服务器信息 ({protocol.upper()})", show_header=False, border_style="yellow")
     table.add_column("Key", style="bold cyan")
