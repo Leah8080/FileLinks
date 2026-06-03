@@ -25,6 +25,9 @@ def print_error(message: str):
 def print_step(message: str):
     print(f"\n{BOLD}{BLUE}➡️ {message}{RESET}")
 
+def print_summary(total: int, links: int, filtered: int):
+    print(f"{BOLD}{CYAN}📊 摘要信息：文件: {total} | 链接: {links} | 过滤: {filtered}{RESET}")
+
 def ask_input(prompt: str) -> str:
     print(f"{BOLD}{CYAN}✏️ {prompt}{RESET}", end="")
     return input().strip()

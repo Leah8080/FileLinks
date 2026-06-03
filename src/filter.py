@@ -57,10 +57,12 @@ def get_ignore_spec(project_path: Path):
     spec = pathspec.PathSpec.from_lines('gitwildmatch', all_patterns)
     return spec
 
-def is_ignored(path: Path, project_path: Path, spec: pathspec.PathSpec) -> bool:
+def is_ignored(path: Path, project_path: Path, spec: pathspec.PathSpec, is_dir: bool = False) -> bool:
     try:
         relative_path = path.relative_to(project_path)
-        # pathspec expects strings
-        return spec.match_file(str(relative_path))
+        path_str = str(relative_path)
+        if is_dir and not path_str.endswith("/"):
+            path_str += "/"
+        return spec.match_file(path_str)
     except ValueError:
         return False
