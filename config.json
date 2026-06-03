@@ -1,18 +1,26 @@
 {
   "ignore": [
-    ".gitignore", ".surgeignore"
+    ".gitignore",
+    ".surgeignore"
   ],
+  "project_icon": "🚀",
+  "link_icon": "🔗",
+  "folder_icon": "📁",
   "icons": {
-    "folder": "📁",
-    "file": "📄",
-    "ext": {
-      ".md": "📝", ".html": "🌐", ".pdf": "📕", ".txt": "📄", ".log": "📄", 
-      ".jpg": "🖼️", ".jpeg": "🖼️", ".png": "🖼️", ".gif": "🖼️", ".svg": "🖼️", 
-      ".mp4": "🎥", ".mp3": "🎼", ".zip": "📦", ".rar": "📦",
-      ".exe": "🧮", ".py": "🐍", ".js": "🟨", ".ts": "🟦", ".go": "🐹", 
-      ".rs": "🦀", ".c": "🛠️", ".cpp": "🛠️", ".java": "☕", ".php": "🐘", 
-      ".rb": "💎",".sh": "📜", ".bat": "🔳", ".sql": "🗄️", ".lua": "🌙",
-      ".yaml": "⚙️", ".json": "⚙️", ".toml": "⚙️"
-    }
+    "default": "📄", 
+    ".html": "🌐",
+    ".js": "📜",
+    ".css": "🎨",
+    ".txt": "📄",
+    ".log": "📄", 
+    ".md": "📝",
+    ".json": "⚙️",
+    ".png": "🖼️",
+    ".jpg": "🖼️",
+    ".jpeg": "🖼️", 
+    ".gif": "🖼️", 
+    ".svg": "🖼️",
+    ".svg": "🎨", 
+    ".pdf": "📕"    
   }
 }
