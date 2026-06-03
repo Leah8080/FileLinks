@@ -2,6 +2,15 @@ import re
 import os
 from pathlib import Path
 
+# Color constants
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+BLUE = "\033[34m"
+CYAN = "\033[36m"
+RED = "\033[31m"
+RESET = "\033[0m"
+BOLD = "\033[1m"
+
 def get_site_url(project_path: Path) -> str:
     cname_path = project_path / "CNAME"
     url = ""
@@ -10,16 +19,18 @@ def get_site_url(project_path: Path) -> str:
         url = cname_path.read_text(encoding="utf-8").strip()
     
     if not url:
-        print(f"在 {project_path} 中未找到 CNAME 文件或内容为空。")
+        print(f"\n{YELLOW}ℹ 未在 {project_path} 中找到 CNAME 文件或内容为空。{RESET}")
         # Support domain + optional path (e.g., sound.jp/app)
         site_regex = re.compile(
             r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:/[a-zA-Z0-9._~:/?#\[\]@!$&\'()*+,;=%-]*)?$'
         )
         
         while True:
-            site_input = input("请输入网站 URL (例如 https://www.test.org): ").strip()
+            print(f"{BOLD}{CYAN}▶ 请输入网站 URL{RESET} (例如 https://www.test.org): ", end="")
+            site_input = input().strip()
+            
             if not site_input:
-                print("URL 不能为空，请重新输入。")
+                print(f"{RED}✘ URL 不能为空，请重新输入。{RESET}")
                 continue
             
             # Strip protocol if present to validate the structure
@@ -31,14 +42,13 @@ def get_site_url(project_path: Path) -> str:
                 url = f"https://{site_path}"
                 break
             else:
-                print("请输入有效的 URL 格式 (例如 https://www.test.org)。")
+                print(f"{RED}✘ 请输入有效的 URL 格式。{RESET}")
         
         # Save to CNAME
         cname_path.write_text(url, encoding="utf-8")
-        print(f"已创建 CNAME 文件: {cname_path}")
+        print(f"{GREEN}✔ 已创建 CNAME 文件: {cname_path}{RESET}\n")
 
     # Normalize URL
-    # Handle cases: test.haha.org, https://test.haha.org, https://test.haha.org/
     normalized_url = url
     if not normalized_url.startswith(("http://", "https://")):
         normalized_url = "https://" + normalized_url
