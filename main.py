@@ -11,17 +11,38 @@ from src.filter import get_ignore_spec
 from src.link_gen import write_link_md
 from src.ui import print_success, print_info, print_error, print_step, ask_input
 
+def print_header():
+    """打印菜单头部"""
+    print("=" * 40)
+    print("         🔗 网站文件链接生成工具")
+    print("=" * 40)
+    print()
+
+def clear_screen():
+    """清屏函数，兼容Windows和Linux/Mac"""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
 def main():
     try:
-        path_input = ask_input("请输入网站项目路径: ")
-        if not path_input:
-            print_error("路径不能为空。")
-            return
-        
-        project_path = Path(path_input).resolve()
-        if not project_path.exists() or not project_path.is_dir():
-            print_error(f"{project_path} 不是有效的目录。")
-            return
+        clear_screen()
+        while True:
+            print_header()
+            path_input = ask_input("请输入网站项目路径: ")
+            
+            if not path_input:
+                print_error("路径不能为空，请重新输入...")
+                input()
+                clear_screen()
+                continue
+            
+            project_path = Path(path_input).resolve()
+            if not project_path.exists() or not project_path.is_dir():
+                print_error(f"不是有效的目录, 请重新输入...")
+                input()
+                clear_screen()
+                continue
+            
+            break
 
         print_step(f"处理项目: {project_path}")
         
