@@ -3,8 +3,29 @@ import json
 import ftplib
 from pathlib import Path
 import pathspec
-from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, generate_tree, ask_confirm, console
+from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, ask_confirm, console
 from src.filter import is_ignored
+
+def generate_tree(path: Path, project_root: Path, spec, tree=None):
+    """递归生成 Rich 目录树"""
+    from rich.tree import Tree
+    
+    if tree is None:
+        tree = Tree(f"[bold blue]📁 {path.name}[/bold blue]")
+    
+    # 排序：文件夹在前，文件在后
+    items = sorted(list(path.iterdir()), key=lambda x: (not x.is_dir(), x.name.lower()))
+    
+    for item in items:
+        if is_ignored(item, project_root, spec, item.is_dir()):
+            continue
+            
+        if item.is_dir():
+            branch = tree.add(f"[bold blue]📁 {item.name}[/bold blue]")
+            generate_tree(item, project_root, spec, branch)
+        else:
+            tree.add(f"[green]📄 {item.name}[/green]")
+    return tree
 
 def count_local_items(path: Path, project_root: Path, spec):
     """统计待同步的文件和文件夹数量"""
