@@ -14,8 +14,10 @@ from src.filter import is_ignored
 # --- 辅助函数 ---
 
 def normalize_path(path_str):
-    """确保路径使用正斜杠并规范化"""
-    return path_str.replace("\\", "/").strip("/")
+    """确保路径使用正斜杠，且不带末尾斜杠。保留起始斜杠以维持绝对路径性质。"""
+    if not path_str: return "/"
+    p = path_str.replace("\\", "/").strip("/")
+    return "/" + p if p else "/"
 
 def get_local_structure(path: Path, project_root: Path, spec):
     """递归获取本地文件结构"""
@@ -24,7 +26,7 @@ def get_local_structure(path: Path, project_root: Path, spec):
         if is_ignored(item, project_root, spec, item.is_dir()):
             continue
         
-        rel_path = normalize_path(str(item.relative_to(project_root)))
+        rel_path = item.relative_to(project_root).as_posix().strip("/")
         if item.is_dir():
             structure[rel_path] = {"type": "dir", "size": 0}
             structure.update(get_local_structure(item, project_root, spec))
@@ -35,13 +37,17 @@ def get_local_structure(path: Path, project_root: Path, spec):
 def get_remote_structure_ftp(ftp, current_remote, base_remote):
     """递归获取 FTP 远程结构"""
     structure = {}
+    current_remote = normalize_path(current_remote)
+    base_remote = normalize_path(base_remote)
+    
     try:
         try:
-            # 优先使用 mlsd 获取详细信息
+            # 优先使用 mlsd
             for name, facts in ftp.mlsd(current_remote):
                 if name in (".", ".."): continue
                 remote_item_path = normalize_path(f"{current_remote}/{name}")
-                rel_path = normalize_path(remote_item_path[len(base_remote):])
+                # 计算相对路径
+                rel_path = remote_item_path[len(base_remote):].lstrip("/")
                 
                 if facts['type'] == 'dir':
                     structure[rel_path] = {"type": "dir", "size": 0}
@@ -50,13 +56,12 @@ def get_remote_structure_ftp(ftp, current_remote, base_remote):
                     structure[rel_path] = {"type": "file", "size": int(facts.get('size', 0))}
             return structure
         except:
-            # 退回到 nlst
             items = ftp.nlst(current_remote)
             for item_path in items:
                 name = Path(item_path).name
                 if name in (".", ".."): continue
                 remote_item_path = normalize_path(item_path if item_path.startswith("/") else f"{current_remote}/{name}")
-                rel_path = normalize_path(remote_item_path[len(base_remote):])
+                rel_path = remote_item_path[len(base_remote):].lstrip("/")
                 
                 is_dir = False
                 size = 0
@@ -82,7 +87,7 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote):
         for item in sftp.listdir_attr(current_remote):
             if item.filename in (".", ".."): continue
             remote_item_path = normalize_path(f"{current_remote}/{item.filename}")
-            rel_path = normalize_path(remote_item_path[len(base_remote):])
+            rel_path = remote_item_path[len(base_remote):].lstrip("/")
             
             if stat.S_ISDIR(item.st_mode):
                 structure[rel_path] = {"type": "dir", "size": 0}
@@ -96,7 +101,7 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote):
 # --- 同步计划 ---
 
 def generate_sync_plan(local_struct, remote_struct):
-    """生成详细的同步计划和摘要"""
+    """对比两端结构，生成同步计划"""
     all_paths = sorted(list(set(local_struct.keys()) | set(remote_struct.keys())))
     plan = {"upload": [], "delete": [], "skip": []}
     stats = {"added": 0, "updated": 0, "deleted": 0}
@@ -128,8 +133,6 @@ def generate_sync_plan(local_struct, remote_struct):
 def display_sync_tree(path_states, local_struct, remote_struct, project_name, stats):
     """显示优化的同步预览树"""
     from rich.tree import Tree
-    
-    # 显示摘要面板
     summary = f"[bold green]+ {stats['added']} 待同步[/bold green]  " \
               f"[bold yellow]~ {stats['updated']} 待更新[/bold yellow]  " \
               f"[bold red]- {stats['deleted']} 待删除[/bold red]"
@@ -154,7 +157,6 @@ def display_sync_tree(path_states, local_struct, remote_struct, project_name, st
         elif state == "updated":
             style, label = "bold yellow", "[待更新]"
             
-        # 如果父级是新增或删除，子级不再显示标签
         if parent in path_states and path_states[parent] in ("added", "deleted"):
             label = ""
             
@@ -172,7 +174,7 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
     server_json = project_path / "server.json"
     if not server_json.exists():
         print_error("未找到 server.json")
-        return
+        return False
     
     try:
         with open(server_json, "r", encoding="utf-8") as f:
@@ -181,17 +183,17 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         config = config_all[protocol]
     except Exception as e:
         print_error(f"配置文件解析失败: {e}")
-        return
+        return False
 
     print_server_info(protocol, config)
     
-    # 1. 分析
     local_struct, remote_struct = {}, {}
     with console.status("[bold cyan]正在分析同步计划...[/bold cyan]", spinner="dots"):
         local_struct = get_local_structure(project_path, project_path, spec)
         try:
             if protocol == "ftp":
                 with ftplib.FTP() as ftp:
+                    ftp.set_pasv(True)
                     ftp.connect(config["host"], config.get("port", 21), timeout=30)
                     ftp.login(config["user"], config["password"])
                     base = normalize_path(config.get("remote_path") or ftp.pwd())
@@ -208,7 +210,6 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         except Exception as e:
             print_warning(f"分析远程结构时遇到问题: {e}")
 
-    # 2. 计划与展示
     plan, path_states, stats = generate_sync_plan(local_struct, remote_struct)
     display_sync_tree(path_states, local_struct, remote_struct, project_path.name, stats)
     
@@ -220,7 +221,6 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
         print_warning("已取消同步操作。")
         return False
 
-    # 3. 执行
     try:
         if protocol == "ftp":
             run_ftp_plan(project_path, config, plan)
@@ -228,20 +228,17 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
             run_sftp_plan(project_path, config, plan)
         return True
     except Exception as e:
-        print_error(f"同步过程中发生错误: {e}")
+        print_error(f"同步失败: {e}")
         return False
 
 def run_ftp_plan(project_root, config, plan):
-    # 为防止长时间上传导致控制连接断开，我们分两步执行
     with ftplib.FTP() as ftp:
+        ftp.set_pasv(True)
         ftp.connect(config["host"], config.get("port", 21), timeout=60)
         ftp.login(config["user"], config["password"])
         base = normalize_path(config.get("remote_path") or ftp.pwd())
         
-        # 统计文件上传
-        upload_files = [p for p in plan["upload"] if (project_root / p).is_file()]
-        
-        if upload_files:
+        if plan["upload"]:
             print_step("正在上传文件...")
             with Progress(
                 SpinnerColumn(),
@@ -253,7 +250,7 @@ def run_ftp_plan(project_root, config, plan):
             ) as progress:
                 for path in plan["upload"]:
                     local_file = project_root / path
-                    remote_file = f"{base}/{path}"
+                    remote_file = normalize_path(f"{base}/{path}")
                     if local_file.is_dir():
                         try: ftp.mkd(remote_file)
                         except: pass
@@ -264,21 +261,27 @@ def run_ftp_plan(project_root, config, plan):
                             ftp.storbinary(f"STOR {remote_file}", f, callback=lambda chunk: progress.update(task, advance=len(chunk)))
                         progress.remove_task(task)
         
-    # 重新连接进行清理，防止 Timeout (10053)
     if plan["delete"]:
         print_step("正在清理远程多余文件...")
-        with ftplib.FTP() as ftp:
-            ftp.connect(config["host"], config.get("port", 21))
-            ftp.login(config["user"], config["password"])
-            base = normalize_path(config.get("remote_path") or ftp.pwd())
-            for path in reversed(plan["delete"]):
-                remote_item = f"{base}/{path}"
-                try:
-                    ftp.delete(remote_item)
-                    print_warning(f"已删除: {path}")
-                except:
-                    try: ftp.rmd(remote_item); print_warning(f"已删除目录: {path}")
-                    except: pass
+        try:
+            with ftplib.FTP() as ftp:
+                ftp.set_pasv(True)
+                ftp.connect(config["host"], config.get("port", 21), timeout=60)
+                ftp.login(config["user"], config["password"])
+                base = normalize_path(config.get("remote_path") or ftp.pwd())
+                for path in reversed(plan["delete"]):
+                    remote_item = normalize_path(f"{base}/{path}")
+                    try:
+                        ftp.delete(remote_item)
+                        print_warning(f"已删除: {path}")
+                    except:
+                        try:
+                            ftp.rmd(remote_item)
+                            print_warning(f"已删除目录: {path}")
+                        except:
+                            pass
+        except Exception as e:
+            print_error(f"清理阶段连接失败: {e}")
                     
     print_success("FTP 同步完成！")
 
@@ -290,8 +293,7 @@ def run_sftp_plan(project_root, config, plan):
     sftp = ssh.open_sftp()
     base = normalize_path(config.get("remote_path") or sftp.normalize("."))
     
-    upload_files = [p for p in plan["upload"] if (project_root / p).is_file()]
-    if upload_files:
+    if plan["upload"]:
         print_step("正在上传文件...")
         with Progress(
             SpinnerColumn(),
@@ -303,7 +305,7 @@ def run_sftp_plan(project_root, config, plan):
         ) as progress:
             for path in plan["upload"]:
                 local_file = project_root / path
-                remote_file = f"{base}/{path}"
+                remote_file = normalize_path(f"{base}/{path}")
                 if local_file.is_dir():
                     try: sftp.mkdir(remote_file)
                     except: pass
@@ -316,13 +318,16 @@ def run_sftp_plan(project_root, config, plan):
     if plan["delete"]:
         print_step("正在清理远程多余文件...")
         for path in reversed(plan["delete"]):
-            remote_item = f"{base}/{path}"
+            remote_item = normalize_path(f"{base}/{path}")
             try:
                 sftp.remove(remote_item)
                 print_warning(f"已删除: {path}")
             except:
-                try: sftp.rmdir(remote_item); print_warning(f"已删除目录: {path}")
-                except: pass
+                try:
+                    sftp.rmdir(remote_item)
+                    print_warning(f"已删除目录: {path}")
+                except:
+                    pass
                 
     sftp.close(); ssh.close()
     print_success("SFTP 同步完成！")
@@ -333,8 +338,10 @@ def ensure_remote_dir_ftp(ftp, path):
     curr = ""
     for p in parts:
         curr += "/" + p
-        try: ftp.mkd(curr)
-        except: pass
+        try:
+            ftp.mkd(curr)
+        except:
+            pass
 
 def ensure_remote_dir_sftp(sftp, path):
     if path == "/": return
@@ -342,5 +349,7 @@ def ensure_remote_dir_sftp(sftp, path):
     curr = ""
     for p in parts:
         curr += "/" + p
-        try: sftp.mkdir(curr)
-        except: pass
+        try:
+            sftp.mkdir(curr)
+        except:
+            pass
