@@ -69,12 +69,11 @@ def main():
                 print_step("准备同步文件...")
                 try:
                     spec = get_ignore_spec(project_path)
-                    sync_files(project_path, spec)
-                    
-                    # 同步成功后询问是否生成链接
-                    from src.ui import ask_confirm
-                    if ask_confirm("同步完成，是否立即生成文件链接?"):
-                        generate_links_workflow(project_path)
+                    if sync_files(project_path, spec):
+                        # 同步成功后询问是否生成链接
+                        from src.ui import ask_confirm
+                        if ask_confirm("同步完成，是否立即生成文件链接?"):
+                            generate_links_workflow(project_path)
                 except Exception as e:
                     print_error(f"同步失败: {e}")
                 input("\n按回车键继续...")

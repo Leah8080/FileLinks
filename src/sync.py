@@ -214,10 +214,11 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
     
     if not (plan["upload"] or plan["delete"]):
         print_success("本地与远程完全一致，无需操作。")
-        return
+        return False
 
     if not ask_confirm("确认执行上述同步计划吗?"):
-        return
+        print_warning("已取消同步操作。")
+        return False
 
     # 3. 执行
     try:
@@ -225,8 +226,10 @@ def sync_files(project_path: Path, spec: pathspec.PathSpec):
             run_ftp_plan(project_path, config, plan)
         else:
             run_sftp_plan(project_path, config, plan)
+        return True
     except Exception as e:
         print_error(f"同步过程中发生错误: {e}")
+        return False
 
 def run_ftp_plan(project_root, config, plan):
     # 为防止长时间上传导致控制连接断开，我们分两步执行
