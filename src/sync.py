@@ -558,7 +558,10 @@ def run_ftp_download_plan(project_root, config, plan, source_struct):
 
                         task = progress.add_task(f"下载 {path}", total=size)
                         with open(local_file, "wb") as f:
-                            ftp.retrbinary(f"RETR {remote_file}", callback=lambda chunk: progress.update(task, advance=len(chunk)))
+                            def ftp_callback(data):
+                                f.write(data)
+                                progress.update(task, advance=len(data))
+                            ftp.retrbinary(f"RETR {remote_file}", callback=ftp_callback)
                         progress.remove_task(task)
                     except Exception as e:
                         if 'progress' in locals() and 'task' in locals(): progress.remove_task(task)
