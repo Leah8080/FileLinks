@@ -23,7 +23,7 @@ def select_project_workflow(header_title):
         history = load_history()
         if history:
             print_history_table(history)
-            prompt_msg = "请输入序号选择历史项目，输入 0 退出，或输入新的项目路径"
+            prompt_msg = "请选择序号，或输入新的项目路径 (输入 0 退出)"
         else:
             prompt_msg = "请输入网站项目路径 (输入 0 退出)"
             
@@ -90,7 +90,7 @@ def main():
             options = ["同步文件", "生成链接", "切换项目", "退出脚本"]
             print_menu("文件管理菜单", options)
             
-            choice = ask_input("请选择操作 (0-3): ")
+            choice = ask_input("请选择操作 (0-3)")
             
             if choice == "1":
                 # 同步文件
