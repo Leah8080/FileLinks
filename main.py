@@ -23,9 +23,9 @@ def select_project_workflow(header_title):
         history = load_history()
         if history:
             print_history_table(history)
-            prompt_msg = "请选择序号，或输入新的项目路径 (输入 0 退出)"
+            prompt_msg = "可输入序号或新的项目路径 (输入0退出脚本)\n⏳ 请输入"
         else:
-            prompt_msg = "请输入网站项目路径 (输入 0 退出)"
+            prompt_msg = "输入网站项目路径 (输入0退出脚本)\n⏳ 请输入"
             
         path_input = ask_input(prompt_msg)
         

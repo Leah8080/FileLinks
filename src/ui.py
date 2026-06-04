@@ -48,7 +48,7 @@ def print_menu(title: str, options: list, start_index: int = 1):
     console.print(Panel(menu_text.strip(), title=f"[bold cyan]{title}[/bold cyan]", border_style="cyan", expand=False))
 
 def ask_input(prompt: str) -> str:
-    return Prompt.ask(f"[bold cyan]✏️  {prompt}[/bold cyan]")
+    return Prompt.ask(f"[bold cyan]✏️ {prompt}[/bold cyan]")
 
 def print_header(title: str):
     from rich.align import Align
