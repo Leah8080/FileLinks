@@ -502,9 +502,9 @@ def sync_from_remote(project_path: Path, spec: pathspec.PathSpec):
 
     try:
         if protocol == "ftp":
-            failed_files = run_ftp_download_plan(project_path, config, plan)
+            failed_files = run_ftp_download_plan(project_path, config, plan, remote_struct)
         else:
-            failed_files = run_sftp_download_plan(project_path, config, plan)
+            failed_files = run_sftp_download_plan(project_path, config, plan, remote_struct)
         
         # 更新同步状态缓存 (以本地最新结构为准)
         new_local_struct = get_local_structure(project_path, project_path, spec)
@@ -522,7 +522,7 @@ def sync_from_remote(project_path: Path, spec: pathspec.PathSpec):
         print_error(f"下载失败: {e}")
         return False
 
-def run_ftp_download_plan(project_root, config, plan):
+def run_ftp_download_plan(project_root, config, plan, source_struct):
     failed_files = []
     with ftplib.FTP() as ftp:
         ftp.set_pasv(True)
@@ -543,31 +543,25 @@ def run_ftp_download_plan(project_root, config, plan):
                 for path in plan["upload"]:
                     local_file = project_root / path
                     remote_file = normalize_path(f"{base}/{path}")
-                    
-                    # 检查远程是否是目录（在 FTP 中判断稍复杂，这里假设 path_states 中已包含信息）
-                    # 实际上 generate_sync_plan 已经根据 remote_struct 判定了类型
-                    if not remote_file.endswith("/") and "." not in os.path.basename(remote_file) and "/" not in path:
-                         # 简单的启发式判断，可能不准确，更好的是看 remote_struct
-                         pass
+                    is_dir = source_struct.get(path, {}).get("type") == "dir"
 
-                    # 实际上我们可以从计划中获取类型信息，或者简单地尝试下载
                     try:
+                        if is_dir:
+                            local_file.mkdir(parents=True, exist_ok=True)
+                            continue
+                        
                         # 确保本地目录存在
                         local_file.parent.mkdir(parents=True, exist_ok=True)
                         
-                        # 尝试获取大小用于进度条
-                        try: size = ftp.size(remote_file)
-                        except: size = 0
-                        
-                        if size is None: # 说明是目录
-                            local_file.mkdir(parents=True, exist_ok=True)
-                            continue
+                        # 获取大小用于进度条
+                        size = source_struct.get(path, {}).get("size", 0)
 
                         task = progress.add_task(f"下载 {path}", total=size)
                         with open(local_file, "wb") as f:
                             ftp.retrbinary(f"RETR {remote_file}", callback=lambda chunk: progress.update(task, advance=len(chunk)))
                         progress.remove_task(task)
                     except Exception as e:
+                        if 'progress' in locals() and 'task' in locals(): progress.remove_task(task)
                         print_error(f"下载失败 {path}: {e}")
                         failed_files.append((path, str(e)))
         
@@ -588,7 +582,7 @@ def run_ftp_download_plan(project_root, config, plan):
                 failed_files.append((path, f"本地删除失败: {e}"))
     return failed_files
 
-def run_sftp_download_plan(project_root, config, plan):
+def run_sftp_download_plan(project_root, config, plan, source_struct):
     failed_files = []
     import paramiko
     ssh = paramiko.SSHClient()
@@ -610,21 +604,24 @@ def run_sftp_download_plan(project_root, config, plan):
             for path in plan["upload"]:
                 local_file = project_root / path
                 remote_file = normalize_path(f"{base}/{path}")
+                is_dir = source_struct.get(path, {}).get("type") == "dir"
                 
                 try:
+                    if is_dir:
+                        local_file.mkdir(parents=True, exist_ok=True)
+                        continue
+
                     # 确保本地目录存在
                     local_file.parent.mkdir(parents=True, exist_ok=True)
                     
                     # 获取远程属性
-                    attr = sftp.stat(remote_file)
-                    if stat.S_ISDIR(attr.st_mode):
-                        local_file.mkdir(parents=True, exist_ok=True)
-                        continue
+                    size = source_struct.get(path, {}).get("size", 0)
                     
-                    task = progress.add_task(f"下载 {path}", total=attr.st_size)
+                    task = progress.add_task(f"下载 {path}", total=size)
                     sftp.get(remote_file, str(local_file), callback=lambda cur, tot: progress.update(task, completed=cur))
                     progress.remove_task(task)
                 except Exception as e:
+                    if 'progress' in locals() and 'task' in locals(): progress.remove_task(task)
                     print_error(f"下载失败 {path}: {e}")
                     failed_files.append((path, str(e)))
             
