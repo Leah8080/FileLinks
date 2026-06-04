@@ -63,7 +63,7 @@ def print_history_table(history: list):
     
     table = Table(title="📜 历史项目", show_header=True, header_style="bold cyan")
     table.add_column("#", justify="center", style="dim")
-    table.add_column("路径", style="green")
+    table.add_column("项目路径", style="green")
     table.add_column("日期", justify="center", style="blue")
     
     for i, item in enumerate(history):

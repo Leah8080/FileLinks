@@ -86,18 +86,24 @@ def main():
             clear_screen()
             print_header(header_title)
             
-            # 美化当前项目显示
-            from rich.panel import Panel
-            console.print(Panel(f"[bold green]📂 {project_path}[/bold green]", title="[bold cyan]当前工作项目[/bold cyan]", border_style="green", expand=False))
+            # 构造合并后的面板内容
+            menu_content = f"[bold cyan]📂 当前项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
+            menu_content += "─" * 60 + "\n"
             
             options = [
-                "同步本地 (上传本地文件到远程主机)", 
-                "同步云端 (从远程主机下载文件到本地)", 
-                "生成链接 (为项目文件生成访问链接)", 
-                "切换项目 (选择其他网站项目路径)", 
+                "同步本地 [dim]上传本地文件到远程主机[/dim]", 
+                "同步云端 [dim]从远程主机下载文件到本地[/dim]", 
+                "生成链接 [dim]为项目文件生成访问链接[/dim]", 
+                "切换项目 [dim]选择其他网站项目路径[/dim]", 
                 "退出脚本"
             ]
-            print_menu("🚀 文件管理菜单", options)
+            
+            for i, option in enumerate(options):
+                idx = i + 1 if "退出" not in option else 0
+                menu_content += f"[bold blue]{idx}.[/bold blue] {option}\n"
+            
+            from rich.panel import Panel
+            console.print(Panel(menu_content.strip(), title="[bold magenta]🚀 网站文件管理[/bold magenta]", border_style="cyan", expand=False))
             
             choice = ask_input("请选择操作 (0-4)")
             
