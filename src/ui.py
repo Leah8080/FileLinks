@@ -52,7 +52,12 @@ def ask_input(prompt: str) -> str:
 
 def print_header(title: str):
     from rich.align import Align
-    console.print(Panel(Align.center(f"[bold magenta]{title}[/bold magenta]"), style="bold blue", expand=False))
+    console.print(Panel(
+        Align.center(f"[bold magenta]{title}[/bold magenta]"),
+        subtitle="[dim]v1.0.0 • Efficient Website Management[/dim]",
+        style="bold blue",
+        expand=False
+    ))
 
 def print_history_table(history: list):
     """

@@ -78,7 +78,7 @@ def generate_links_workflow(project_path):
     print_success("链接生成完成！")
 
 def main():
-    header_title = "🌐 网站文件管理工具"
+    header_title = " " * 25 +"🌐 网站文件管理工具" + " " * 25
     try:
         project_path = select_project_workflow(header_title)
 
