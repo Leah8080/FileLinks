@@ -23,9 +23,9 @@ def select_project_workflow(header_title):
         history = load_history()
         if history:
             print_history_table(history)
-            prompt_msg = "请输入序号选择历史项目，或输入新的项目路径"
+            prompt_msg = "请输入序号选择历史项目，输入 0 退出，或输入新的项目路径"
         else:
-            prompt_msg = "请输入网站项目路径"
+            prompt_msg = "请输入网站项目路径 (输入 0 退出)"
             
         path_input = ask_input(prompt_msg)
         
@@ -33,6 +33,10 @@ def select_project_workflow(header_title):
             print_error("输入不能为空，请重新输入...")
             input("\n按回车键继续...")
             continue
+        
+        if path_input == "0":
+            print_info("退出脚本，再见！")
+            sys.exit(0)
         
         # 尝试作为序号解析
         if path_input.isdigit():
