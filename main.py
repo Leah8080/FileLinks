@@ -10,15 +10,19 @@ from src.ui import print_success, print_info, print_error, print_step, ask_input
 from src.sync import sync_to_remote, sync_from_remote
 from src.history_manager import load_history, save_history
 
+header_title = " " * 25 +"🌐 网站文件管理" + " " * 25
+sub_title = "v1.0.0 • Efficient Website Management"
+menu_title = "我的项目"
+
 def clear_screen():
     """清屏函数，兼容Windows和Linux/Mac"""
     os.system('cls' if os.name == 'nt' else 'clear')
 
-def select_project_workflow(header_title):
+def select_project_workflow():
     """选择项目路径工作流"""
     while True:
         clear_screen()
-        print_header(header_title)
+        print_header(header_title, sub_title)
         
         history = load_history()
         if history:
@@ -78,17 +82,17 @@ def generate_links_workflow(project_path):
     print_success("链接生成完成！")
 
 def main():
-    header_title = " " * 25 +"🌐 网站文件管理工具" + " " * 25
+   
     try:
-        project_path = select_project_workflow(header_title)
+        project_path = select_project_workflow()
 
         while True:
             clear_screen()
-            print_header(header_title)
+            print_header(header_title, sub_title)
             
             # 构造合并后的面板内容
-            menu_content = f"[bold cyan]📂 当前项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
-            menu_content += "─" * 60 + "\n"
+            menu_content = f"[bold cyan]📂 项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
+            menu_content += "[dim]─[/dim]" * 60 + "\n"
             
             options = [
                 "同步本地 [dim]上传本地文件到远程主机[/dim]", 
@@ -103,7 +107,7 @@ def main():
                 menu_content += f"[bold blue]{idx}.[/bold blue] {option}\n"
             
             from rich.panel import Panel
-            console.print(Panel(menu_content.strip(), title="[bold magenta]🚀 网站文件管理[/bold magenta]", border_style="cyan", expand=False))
+            console.print(Panel(menu_content.strip(), title=f"[bold cyan]🚀 {menu_title}[/bold cyan]", border_style="cyan", expand=False))
             
             choice = ask_input("请选择操作 (0-4)")
             
@@ -145,7 +149,7 @@ def main():
             
             elif choice == "4":
                 # 切换项目
-                project_path = select_project_workflow(header_title)
+                project_path = select_project_workflow()
                 
             elif choice == "0":
                 print_info("退出脚本，再见！")
