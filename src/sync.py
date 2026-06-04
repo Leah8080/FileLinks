@@ -5,6 +5,7 @@ import stat
 import time
 from pathlib import Path
 import pathspec
+import shutil
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TransferSpeedColumn
 from rich.panel import Panel
 from rich.table import Table
@@ -182,10 +183,11 @@ def generate_sync_plan(local_struct, remote_struct, cache_struct=None):
                 
     return plan, path_states, stats
 
-def display_sync_tree(path_states, local_struct, remote_struct, project_name, stats):
+def display_sync_tree(path_states, local_struct, remote_struct, project_name, stats, is_download=False):
     """显示优化的同步预览树"""
     from rich.tree import Tree
-    summary = f"[bold green]+ {stats['added']} 待同步[/bold green]  " \
+    action_text = "下载" if is_download else "同步"
+    summary = f"[bold green]+ {stats['added']} 待{action_text}[/bold green]  " \
               f"[bold yellow]~ {stats['updated']} 待更新[/bold yellow]  " \
               f"[bold red]- {stats['deleted']} 待删除[/bold red]"
     console.print(Panel(summary, title="📊 同步摘要", expand=False))
@@ -203,7 +205,7 @@ def display_sync_tree(path_states, local_struct, remote_struct, project_name, st
         style, label = "dim", ""
         
         if state == "added":
-            style, label = "bold green", "[待同步]"
+            style, label = "bold green", f"[待{action_text}]"
         elif state == "deleted":
             style, label = "bold red", "[待删除]"
         elif state == "updated":
@@ -222,7 +224,7 @@ def display_sync_tree(path_states, local_struct, remote_struct, project_name, st
 
 # --- 执行函数 ---
 
-def sync_files(project_path: Path, spec: pathspec.PathSpec):
+def sync_to_remote(project_path: Path, spec: pathspec.PathSpec):
     server_json = project_path / "server.json"
     if not server_json.exists():
         print_error("未找到 server.json")
@@ -439,6 +441,208 @@ def run_sftp_plan(project_root, config, plan):
                 except Exception as e2:
                     print_error(f"删除失败 {path}: {e2}")
                     failed_files.append((path, f"删除失败: {e2}"))
+                
+    sftp.close(); ssh.close()
+    return failed_files
+
+def sync_from_remote(project_path: Path, spec: pathspec.PathSpec):
+    server_json = project_path / "server.json"
+    if not server_json.exists():
+        print_error("未找到 server.json")
+        return False
+    
+    try:
+        with open(server_json, "r", encoding="utf-8") as f:
+            config_all = json.load(f)
+        protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
+        config = config_all[protocol]
+    except Exception as e:
+        print_error(f"配置文件解析失败: {e}")
+        return False
+
+    print_server_info(protocol, config)
+    
+    local_struct, remote_struct = {}, {}
+    with console.status("[bold cyan]正在分析同步计划...[/bold cyan]", spinner="dots"):
+        local_struct = get_local_structure(project_path, project_path, spec)
+        try:
+            if protocol == "ftp":
+                with ftplib.FTP() as ftp:
+                    ftp.set_pasv(True)
+                    ftp.connect(config["host"], config.get("port", 21), timeout=30)
+                    ftp.login(config["user"], config["password"])
+                    base = normalize_path(config.get("remote_path") or ftp.pwd())
+                    remote_struct = get_remote_structure_ftp(ftp, base, base)
+            else:
+                import paramiko
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
+                sftp = ssh.open_sftp()
+                base = normalize_path(config.get("remote_path") or sftp.normalize("."))
+                remote_struct = get_remote_structure_sftp(sftp, base, base)
+                sftp.close(); ssh.close()
+        except Exception as e:
+            print_error(f"连接远程服务器失败: {e}")
+            return False
+
+    # 注意：下载同步时，我们将 remote_struct 作为“源”，local_struct 作为“目标”
+    # 这样 plan["upload"] 就是需要下载的文件，plan["delete"] 就是本地多余需要删除的文件
+    cache_struct = load_sync_state(project_path)
+    plan, path_states, stats = generate_sync_plan(remote_struct, local_struct, cache_struct)
+    display_sync_tree(path_states, remote_struct, local_struct, project_path.name, stats, is_download=True)
+    
+    if not (plan["upload"] or plan["delete"]):
+        print_success("本地与远程完全一致，无需下载。")
+        return False
+
+    if not ask_confirm("确认从云端同步到本地吗? (本地多余文件将被删除)"):
+        print_warning("已取消同步操作。")
+        return False
+
+    try:
+        if protocol == "ftp":
+            failed_files = run_ftp_download_plan(project_path, config, plan)
+        else:
+            failed_files = run_sftp_download_plan(project_path, config, plan)
+        
+        # 更新同步状态缓存 (以本地最新结构为准)
+        new_local_struct = get_local_structure(project_path, project_path, spec)
+        save_sync_state(project_path, new_local_struct)
+        
+        if failed_files:
+            print_warning("\n⚠️ 下载完成，但以下文件处理失败：")
+            for path, err in failed_files:
+                print_error(f"  - {path} : {err}")
+            return False
+        else:
+            print_success("\n🎉 所有文件下载成功！")
+            return True
+    except Exception as e:
+        print_error(f"下载失败: {e}")
+        return False
+
+def run_ftp_download_plan(project_root, config, plan):
+    failed_files = []
+    with ftplib.FTP() as ftp:
+        ftp.set_pasv(True)
+        ftp.connect(config["host"], config.get("port", 21), timeout=60)
+        ftp.login(config["user"], config["password"])
+        base = normalize_path(config.get("remote_path") or ftp.pwd())
+        
+        if plan["upload"]: # 这里的 upload 实际上是下载
+            print_step("正在下载文件...")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TransferSpeedColumn(),
+                console=console
+            ) as progress:
+                for path in plan["upload"]:
+                    local_file = project_root / path
+                    remote_file = normalize_path(f"{base}/{path}")
+                    
+                    # 检查远程是否是目录（在 FTP 中判断稍复杂，这里假设 path_states 中已包含信息）
+                    # 实际上 generate_sync_plan 已经根据 remote_struct 判定了类型
+                    if not remote_file.endswith("/") and "." not in os.path.basename(remote_file) and "/" not in path:
+                         # 简单的启发式判断，可能不准确，更好的是看 remote_struct
+                         pass
+
+                    # 实际上我们可以从计划中获取类型信息，或者简单地尝试下载
+                    try:
+                        # 确保本地目录存在
+                        local_file.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        # 尝试获取大小用于进度条
+                        try: size = ftp.size(remote_file)
+                        except: size = 0
+                        
+                        if size is None: # 说明是目录
+                            local_file.mkdir(parents=True, exist_ok=True)
+                            continue
+
+                        task = progress.add_task(f"下载 {path}", total=size)
+                        with open(local_file, "wb") as f:
+                            ftp.retrbinary(f"RETR {remote_file}", callback=lambda chunk: progress.update(task, advance=len(chunk)))
+                        progress.remove_task(task)
+                    except Exception as e:
+                        print_error(f"下载失败 {path}: {e}")
+                        failed_files.append((path, str(e)))
+        
+    if plan["delete"]:
+        print_step("正在清理本地多余文件...")
+        for path in reversed(plan["delete"]):
+            local_item = project_root / path
+            try:
+                if local_item.is_file():
+                    local_item.unlink()
+                    print_warning(f"已删除本地文件: {path}")
+                elif local_item.is_dir():
+                    import shutil
+                    shutil.rmtree(local_item)
+                    print_warning(f"已删除本地目录: {path}")
+            except Exception as e:
+                print_error(f"本地删除失败 {path}: {e}")
+                failed_files.append((path, f"本地删除失败: {e}"))
+    return failed_files
+
+def run_sftp_download_plan(project_root, config, plan):
+    failed_files = []
+    import paramiko
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
+    sftp = ssh.open_sftp()
+    base = normalize_path(config.get("remote_path") or sftp.normalize("."))
+    
+    if plan["upload"]: # 这里的 upload 实际上是下载
+        print_step("正在下载文件...")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TransferSpeedColumn(),
+            console=console
+        ) as progress:
+            for path in plan["upload"]:
+                local_file = project_root / path
+                remote_file = normalize_path(f"{base}/{path}")
+                
+                try:
+                    # 确保本地目录存在
+                    local_file.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # 获取远程属性
+                    attr = sftp.stat(remote_file)
+                    if stat.S_ISDIR(attr.st_mode):
+                        local_file.mkdir(parents=True, exist_ok=True)
+                        continue
+                    
+                    task = progress.add_task(f"下载 {path}", total=attr.st_size)
+                    sftp.get(remote_file, str(local_file), callback=lambda cur, tot: progress.update(task, completed=cur))
+                    progress.remove_task(task)
+                except Exception as e:
+                    print_error(f"下载失败 {path}: {e}")
+                    failed_files.append((path, str(e)))
+            
+    if plan["delete"]:
+        print_step("正在清理本地多余文件...")
+        for path in reversed(plan["delete"]):
+            local_item = project_root / path
+            try:
+                if local_item.is_file():
+                    local_item.unlink()
+                    print_warning(f"已删除本地文件: {path}")
+                elif local_item.is_dir():
+                    import shutil
+                    shutil.rmtree(local_item)
+                    print_warning(f"已删除本地目录: {path}")
+            except Exception as e:
+                print_error(f"本地删除失败 {path}: {e}")
+                failed_files.append((path, f"本地删除失败: {e}"))
                 
     sftp.close(); ssh.close()
     return failed_files

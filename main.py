@@ -7,7 +7,7 @@ from src.site_info import get_site_url
 from src.filter import get_ignore_spec
 from src.link_gen import write_link_md
 from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu, print_header, print_history_table
-from src.sync import sync_files
+from src.sync import sync_to_remote, sync_from_remote
 from src.history_manager import load_history, save_history
 
 def clear_screen():
@@ -87,17 +87,17 @@ def main():
             print_header(header_title)
             print_info(f"当前项目: {project_path}")
             
-            options = ["同步文件", "生成链接", "切换项目", "退出脚本"]
+            options = ["同步本地", "同步云端", "生成链接", "切换项目", "退出脚本"]
             print_menu("文件管理菜单", options)
             
-            choice = ask_input("请选择操作 (0-3)")
+            choice = ask_input("请选择操作 (0-4)")
             
             if choice == "1":
-                # 同步文件
-                print_step("准备同步文件...")
+                # 同步本地
+                print_step("准备同步到远程...")
                 try:
                     spec = get_ignore_spec(project_path)
-                    if sync_files(project_path, spec):
+                    if sync_to_remote(project_path, spec):
                         # 同步成功后询问是否生成链接
                         from src.ui import ask_confirm
                         if ask_confirm("同步完成，是否立即生成文件链接?"):
@@ -105,8 +105,18 @@ def main():
                 except Exception as e:
                     print_error(f"同步失败: {e}")
                 input("\n按回车键继续...")
-                
+            
             elif choice == "2":
+                # 同步云端
+                print_step("准备从远程同步...")
+                try:
+                    spec = get_ignore_spec(project_path)
+                    sync_from_remote(project_path, spec)
+                except Exception as e:
+                    print_error(f"同步失败: {e}")
+                input("\n按回车键继续...")
+                
+            elif choice == "3":
                 # 生成链接
                 try:
                     generate_links_workflow(project_path)
@@ -114,7 +124,7 @@ def main():
                     print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
             
-            elif choice == "3":
+            elif choice == "4":
                 # 切换项目
                 project_path = select_project_workflow(header_title)
                 
