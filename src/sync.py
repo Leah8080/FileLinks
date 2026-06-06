@@ -306,14 +306,21 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
     nodes = {"": tree}
     all_paths = sorted(path_states.keys())
     
+    # 判断是否有任何实质性变动
+    has_changes = (stats['added'] + stats['updated'] + stats['deleted'] + stats.get('conflict', 0)) > 0
+
     for path in all_paths:
         parts = path.split("/")
         parent = "/".join(parts[:-1])
         name = parts[-1]
         
         state = path_states[path]
-        if state == "none" and not any(p.startswith(path + "/") for p in path_states if path_states[p] != "none"):
-            continue
+        
+        # 如果有变动，为了清晰，隐藏没有变动的目录和文件
+        # 如果完全没有变动，则不隐藏任何项，显示完整结构供用户预览
+        if has_changes:
+            if state == "none" and not any(p.startswith(path + "/") for p in path_states if path_states[p] != "none"):
+                continue
 
         style, label = "dim", ""
         if state == "added":
