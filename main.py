@@ -125,9 +125,9 @@ def main():
                 "🔄 智能同步 [dim]自动判断双端数据，增量更新省时省力[/dim]", 
                 "📤 强制上传 [dim]以本地数据为准，强制推送覆盖云端[/dim]", 
                 "📥 强制下载 [dim]以云端数据为准，强制拉取覆盖本地[/dim]", 
-                "🔗 生成链接 [dim]为项目文件生成访问链接[/dim]", 
                 "⚙️ 主机配置 [dim]管理远程主机连接信息[/dim]",
                 "🌐 域名配置 [dim]添加、更新访问域名 CNAME[/dim]",
+                "🔗 生成链接 [dim]为项目文件生成访问链接[/dim]", 
                 "📂 切换项目 [dim]选择其他网站项目路径[/dim]", 
                 "🚪 退出脚本"
             ]
@@ -184,23 +184,23 @@ def main():
                 input("\n按回车键继续...")
                 
             elif choice == "4":
-                # 生成链接
-                try:
-                    generate_links_workflow(project_path)
-                except Exception as e:
-                    print_error(f"生成链接失败: {e}")
-                input("\n按回车键继续...")
-            
-            elif choice == "5":
                 # 主机配置
                 from src.sync import manage_host_config
                 manage_host_config(project_path)
                 input("\n按回车键继续...")
 
-            elif choice == "6":
+            elif choice == "5":
                 # 域名配置
                 from src.site_info import manage_domain_config
                 manage_domain_config(project_path)
+                input("\n按回车键继续...")
+
+            elif choice == "6":
+                # 生成链接
+                try:
+                    generate_links_workflow(project_path)
+                except Exception as e:
+                    print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
 
             elif choice == "7":
