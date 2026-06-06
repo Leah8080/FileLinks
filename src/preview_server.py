@@ -50,7 +50,7 @@ class PreviewServer:
                         self.server = httpd
                         self.port = current_port
                         self.is_running = True
-                        print_success(f"\n本地预览已开启: http://localhost:{current_port}")
+                        print_success(f"本地预览已开启: http://localhost:{current_port}")
                         startup_event.set()
                         httpd.serve_forever()
                         break

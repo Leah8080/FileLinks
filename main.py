@@ -190,8 +190,12 @@ def main():
                 # 本地预览
                 config = load_config()
                 port = config.get("preview_port", 8000)
-                preview_manager.start(project_path, port)
-                input("\n按回车键继续...")
+                if preview_manager.start(project_path, port):
+                    print_info("按回车键停止预览并退出...")
+                    input("\n按回车键继续...")
+                    preview_manager.stop()
+                else:
+                    input("\n按回车键继续...")
                 
             elif choice == "5":
                 # 主机配置
