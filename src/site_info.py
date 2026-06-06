@@ -3,6 +3,41 @@ import os
 from pathlib import Path
 from src.ui import print_success, print_info, print_error, ask_input
 
+def get_cname_domain(project_path: Path) -> str:
+    """从 CNAME 文件动态获取访问域名"""
+    cname_file = project_path / "CNAME"
+    if cname_file.exists():
+        try:
+            content = cname_file.read_text(encoding="utf-8").strip()
+            if content:
+                # 移除协议头以便于显示
+                content = re.sub(r'^https?://', '', content)
+                return content
+        except Exception:
+            pass
+    return ""
+
+def manage_domain_config(project_path: Path):
+    """交互式管理域名配置 (CNAME 文件)"""
+    from src.ui import print_step, print_info, print_success, print_error, ask_input
+    print_step("配置访问域名")
+    current_domain = get_cname_domain(project_path)
+    
+    print_info("提示：直接回车将保留默认值/当前值")
+    new_domain = ask_input(f"访问域名 [当前: [magenta]{current_domain if current_domain else '未配置'}[/magenta]]") or current_domain
+    
+    if new_domain:
+        try:
+            # 确保保存时不带额外的空格，并保持统一格式
+            clean_domain = new_domain.strip().lower()
+            clean_domain = re.sub(r'^https?://', '', clean_domain)
+            (project_path / "CNAME").write_text(clean_domain, encoding="utf-8")
+            print_success(f"访问域名已更新并保存到 CNAME: {clean_domain}")
+            return True
+        except Exception as e:
+            print_error(f"保存 CNAME 失败: {e}")
+    return False
+
 def get_site_url(project_path: Path) -> str:
     cname_path = project_path / "CNAME"
     url = ""
