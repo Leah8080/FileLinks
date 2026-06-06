@@ -9,7 +9,7 @@ import shutil
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TransferSpeedColumn
 from rich.panel import Panel
 from rich.table import Table
-from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, ask_confirm, console
+from src.ui import print_info, print_success, print_error, print_warning, print_step, print_server_info, ask_confirm, ask_input, console
 from src.filter import is_ignored
 
 import hashlib
