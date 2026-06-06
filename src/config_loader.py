@@ -74,11 +74,11 @@ def load_config() -> dict:
             if content.strip():
                 config_data = json.loads(content)
         except json.JSONDecodeError as e:
+            # 仅在文件格式真的错误时保留警告，并增加停顿以便用户看清
             print_error(f"config.json 格式错误 (行 {e.lineno}, 列 {e.colno}): {e.msg}")
-            print_info("程序将尝试使用默认配置继续运行。")
-        except Exception as e:
-            print_warning(f"读取 config.json 时发生未知错误: {e}")
-    else:
-        print_info("未找到 config.json，将使用内置默认配置。")
-        
+            from src.ui import ask_input
+            ask_input("程序将尝试使用默认配置继续运行，按回车键确认...")
+        except Exception:
+            pass
+    
     return validate_config(config_data)
