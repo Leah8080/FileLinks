@@ -100,15 +100,20 @@ def main():
             
             # 读取主机配置信息
             from src.sync import get_server_config
+            from src.site_info import get_cname_domain
             server_info = get_server_config(project_path)
+            cname_domain = get_cname_domain(project_path)
+            
             if server_info:
                 proto, cfg = server_info
                 # 脱敏显示密码
                 mask_pass = "*" * len(cfg.get("password", "")) if cfg.get("password") else "未设置"
                 host_display = f"[bold cyan]远程主机:[/bold cyan] {proto}://{cfg.get('user')}@{cfg.get('host')}:{cfg.get('port')}\n"
-                host_display += f"[bold cyan]远程路径:[/bold cyan] {cfg.get('remote_path')}"
+                host_display += f"[bold cyan]远程路径:[/bold cyan] {cfg.get('remote_path')}\n"
+                host_display += f"[bold cyan]访问域名:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
             else:
-                host_display = "[bold red]远程主机: 未配置[/bold red]"
+                host_display = f"[bold red]远程主机: 未配置[/bold red]\n"
+                host_display += f"[bold cyan]访问域名:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
 
             # 构造合并后的面板内容
             menu_content = f"[bold cyan]📂 项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
@@ -122,6 +127,7 @@ def main():
                 "📥 强制下载 [dim]以云端数据为准，强制拉取覆盖本地[/dim]", 
                 "🔗 生成链接 [dim]为项目文件生成访问链接[/dim]", 
                 "⚙️ 主机配置 [dim]管理远程主机连接信息[/dim]",
+                "🌐 域名配置 [dim]添加、更新访问域名 CNAME[/dim]",
                 "📂 切换项目 [dim]选择其他网站项目路径[/dim]", 
                 "🚪 退出脚本"
             ]
@@ -133,7 +139,7 @@ def main():
             from rich.panel import Panel
             console.print(Panel(menu_content.strip(), title=f"[bold cyan]🚀 {menu_title}[/bold cyan]", border_style="cyan", expand=False))
             
-            choice = ask_input("请选择操作 (0-6)")
+            choice = ask_input("请选择操作 (0-7)")
             
             if choice == "1":
                 # 智能同步
@@ -192,6 +198,12 @@ def main():
                 input("\n按回车键继续...")
 
             elif choice == "6":
+                # 域名配置
+                from src.site_info import manage_domain_config
+                manage_domain_config(project_path)
+                input("\n按回车键继续...")
+
+            elif choice == "7":
                 # 切换项目
                 project_path = select_project_workflow()
                 
