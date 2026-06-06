@@ -624,11 +624,15 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
             if not success: failed_files.append(res)
 
     if files:
+        from src.config_loader import load_config
+        config_data = load_config()
+        max_workers = config_data.get("max_workers", 3)
+        
         action_name = "下载" if is_download else "上传"
-        print_step(f"正在并发{action_name}文件 ({len(files)} 个, 并发数: 4)...")
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), TransferSpeedColumn(), console=console) as progress:
+        print_step(f"正在并发{action_name}文件 ({len(files)} 个, 并发数: {max_workers})...")
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), TransferSpeedColumn(), console=console, transient=True) as progress:
             task = progress.add_task(f"{action_name}中...", total=len(files))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_path = {executor.submit(process_file, p): p for p in files}
                 for future in concurrent.futures.as_completed(future_to_path):
                     success, result = future.result()
