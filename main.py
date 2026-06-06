@@ -9,6 +9,8 @@ from src.link_gen import write_link_md
 from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu, print_header, print_history_table, console
 from src.sync import sync_to_remote, sync_from_remote
 from src.history_manager import load_history, save_history
+from src.preview_server import preview_manager
+from src.config_loader import load_config
 
 header_title = " " * 25 +"🌐 网站文件管理" + " " * 25
 sub_title = "v1.0.0 • Efficient Website Management"
@@ -125,6 +127,7 @@ def main():
                 "🔄 智能同步 [dim]自动判断双端数据增量更新[/dim]", 
                 "📤 强制上传 [dim]强制推送本地数据覆盖云端[/dim]", 
                 "📥 强制下载 [dim]强制拉取云端数据覆盖本地[/dim]", 
+                "🖥️ 本地预览 [dim]在浏览器中预览本地项目文件[/dim]",
                 "⚙️ 主机配置 [dim]添加/更新远程主机连接信息[/dim]",
                 "🌐 域名配置 [dim]添加/更新访问域名[/dim]",
                 "🔗 生成链接 [dim]生成项目文件访问链接[/dim]", 
@@ -139,7 +142,7 @@ def main():
             from rich.panel import Panel
             console.print(Panel(menu_content.strip(), title=f"[bold cyan]🚀 {menu_title}[/bold cyan]", border_style="cyan", expand=False))
             
-            choice = ask_input("请选择操作 (0-7)")
+            choice = ask_input("请选择操作 (0-8)")
             
             if choice == "1":
                 # 智能同步
@@ -182,20 +185,27 @@ def main():
                 except Exception as e:
                     print_error(f"下载失败: {e}")
                 input("\n按回车键继续...")
-                
+
             elif choice == "4":
+                # 本地预览
+                config = load_config()
+                port = config.get("preview_port", 8000)
+                preview_manager.start(project_path, port)
+                input("\n按回车键继续...")
+                
+            elif choice == "5":
                 # 主机配置
                 from src.sync import manage_host_config
                 manage_host_config(project_path)
                 input("\n按回车键继续...")
 
-            elif choice == "5":
+            elif choice == "6":
                 # 域名配置
                 from src.site_info import manage_domain_config
                 manage_domain_config(project_path)
                 input("\n按回车键继续...")
 
-            elif choice == "6":
+            elif choice == "7":
                 # 生成链接
                 try:
                     generate_links_workflow(project_path)
@@ -203,11 +213,12 @@ def main():
                     print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
 
-            elif choice == "7":
+            elif choice == "8":
                 # 切换项目
                 project_path = select_project_workflow()
                 
             elif choice == "0":
+                preview_manager.stop()
                 print_info("退出脚本，再见！")
                 break
             else:

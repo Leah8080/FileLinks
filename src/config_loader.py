@@ -6,6 +6,7 @@ from src.ui import print_warning, print_error, print_info
 DEFAULT_CONFIG = {
     "max_history": 10,
     "max_workers": 3,
+    "preview_port": 8000,
     "ignore": [
         ".gitignore",
         ".surgeignore"
@@ -38,7 +39,7 @@ def validate_config(config: dict) -> dict:
         if key in config and isinstance(config[key], str):
             validated[key] = config[key]
 
-    for key in ["max_history", "max_workers"]:
+    for key in ["max_history", "max_workers", "preview_port"]:
         if key in config and isinstance(config[key], int):
             validated[key] = config[key]
             
