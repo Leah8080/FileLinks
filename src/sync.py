@@ -306,9 +306,6 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
     nodes = {"": tree}
     all_paths = sorted(path_states.keys())
     
-    # 判断是否有任何实质性变动
-    has_changes = (stats['added'] + stats['updated'] + stats['deleted'] + stats.get('conflict', 0)) > 0
-
     for path in all_paths:
         parts = path.split("/")
         parent = "/".join(parts[:-1])
@@ -316,12 +313,7 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
         
         state = path_states[path]
         
-        # 如果有变动，为了清晰，隐藏没有变动的目录和文件
-        # 如果完全没有变动，则不隐藏任何项，显示完整结构供用户预览
-        if has_changes:
-            if state == "none" and not any(p.startswith(path + "/") for p in path_states if path_states[p] != "none"):
-                continue
-
+        # 始终完整显示，不再根据 has_changes 进行过滤
         style, label = "dim", ""
         if state == "added":
             style, label = "bold green", f"[待{action_text}]"
@@ -333,6 +325,8 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
             style, label = "bold magenta", "[冲突]"
             
         icon = "📁" if (source_struct.get(path) or target_struct.get(path))["type"] == "dir" else "📄"
+        
+        # 根据状态为文件名也添加颜色
         display_text = f"[{style}]{icon} {name} {label}[/{style}]"
         
         if parent in nodes:
@@ -510,7 +504,7 @@ def manage_host_config(project_path: Path):
 
     print_info("提示：直接回车将保留默认值/当前值")
     
-    proto = ask_input(f"传输协议 (ftp/sftp) [当前: {def_proto}]") or def_proto
+    proto = ask_input(f"传输协议 (ftp/sftp) [当前: [magenta]{def_proto}[/magenta]]") or def_proto
     proto = proto.lower()
     if proto not in ["ftp", "sftp"]:
         print_error("无效的协议，仅支持 ftp 或 sftp")
@@ -519,11 +513,11 @@ def manage_host_config(project_path: Path):
     if not def_port:
         def_port = "21" if proto == "ftp" else "22"
         
-    host = ask_input(f"主机地址 [当前: {def_host}]") or def_host
-    port = ask_input(f"端口号 [当前: {def_port}]") or def_port
-    user = ask_input(f"用户名 [当前: {def_user}]") or def_user
-    password = ask_input(f"密码 [当前: {'******' if def_pass else '未设置'}]") or def_pass
-    remote_path = ask_input(f"远程项目路径 [当前: {def_path}]") or def_path
+    host = ask_input(f"主机地址 [当前: [magenta]{def_host}[/magenta]]") or def_host
+    port = ask_input(f"端口号 [当前: [magenta]{def_port}[/magenta]]") or def_port
+    user = ask_input(f"用户名 [当前: [magenta]{def_user}[/magenta]]") or def_user
+    password = ask_input(f"密码 [当前: [magenta]{'******' if def_pass else '未设置'}[/magenta]]") or def_pass
+    remote_path = ask_input(f"远程项目路径 [当前: [magenta]{def_path}[/magenta]]") or def_path
     
     config_data = {
         proto: {
