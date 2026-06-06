@@ -62,6 +62,10 @@ def get_ignore_spec(project_path: Path):
     if ".sync_state" not in all_patterns:
         all_patterns.append(".sync_state")
 
+    # 6. 确保日志文件被忽略
+    if ".sync_log" not in all_patterns:
+        all_patterns.append(".sync_log")
+
     spec = pathspec.PathSpec.from_lines('gitwildmatch', all_patterns)
     return spec
 

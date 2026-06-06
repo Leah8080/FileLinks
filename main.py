@@ -90,8 +90,22 @@ def main():
             clear_screen()
             print_header(header_title, sub_title)
             
+            # 读取主机配置信息
+            from src.sync import get_server_config
+            server_info = get_server_config(project_path)
+            if server_info:
+                proto, cfg = server_info
+                # 脱敏显示密码
+                mask_pass = "*" * len(cfg.get("password", "")) if cfg.get("password") else "未设置"
+                host_display = f"[bold cyan]远程主机:[/bold cyan] {proto}://{cfg.get('user')}@{cfg.get('host')}:{cfg.get('port')}\n"
+                host_display += f"[bold cyan]远程路径:[/bold cyan] {cfg.get('remote_path')}"
+            else:
+                host_display = "[bold red]远程主机: 未配置[/bold red]"
+
             # 构造合并后的面板内容
             menu_content = f"[bold cyan]📂 项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
+            menu_content += f"[dim]─[/dim]" * 60 + "\n"
+            menu_content += f"{host_display}\n"
             menu_content += "[dim]─[/dim]" * 60 + "\n"
             
             options = [
@@ -99,6 +113,7 @@ def main():
                 "📤 强制上传 [dim]以本地数据为准，强制推送覆盖云端[/dim]", 
                 "📥 强制下载 [dim]以云端数据为准，强制拉取覆盖本地[/dim]", 
                 "🔗 生成链接 [dim]为项目文件生成访问链接[/dim]", 
+                "⚙️ 主机配置 [dim]管理远程主机连接信息[/dim]",
                 "📂 切换项目 [dim]选择其他网站项目路径[/dim]", 
                 "🚪 退出脚本"
             ]
@@ -110,7 +125,7 @@ def main():
             from rich.panel import Panel
             console.print(Panel(menu_content.strip(), title=f"[bold cyan]🚀 {menu_title}[/bold cyan]", border_style="cyan", expand=False))
             
-            choice = ask_input("请选择操作 (0-5)")
+            choice = ask_input("请选择操作 (0-6)")
             
             if choice == "1":
                 # 智能同步
@@ -131,7 +146,7 @@ def main():
                 print_step("准备强制上传到远程...")
                 try:
                     spec = get_ignore_spec(project_path)
-                    # 强制上传即为之前的 sync_to_remote，逻辑中包含 wipe 提示
+                    from src.sync import sync_to_remote
                     if sync_to_remote(project_path, spec, force=True):
                         from src.ui import ask_confirm
                         if ask_confirm("同步完成，是否立即生成文件链接?"):
@@ -145,6 +160,7 @@ def main():
                 print_step("准备从远程强制下载...")
                 try:
                     spec = get_ignore_spec(project_path)
+                    from src.sync import sync_from_remote
                     if sync_from_remote(project_path, spec, force=True):
                         from src.ui import ask_confirm
                         if ask_confirm("同步完成，是否立即生成文件链接?"):
@@ -162,6 +178,12 @@ def main():
                 input("\n按回车键继续...")
             
             elif choice == "5":
+                # 主机配置
+                from src.sync import manage_host_config
+                manage_host_config(project_path)
+                input("\n按回车键继续...")
+
+            elif choice == "6":
                 # 切换项目
                 project_path = select_project_workflow()
                 

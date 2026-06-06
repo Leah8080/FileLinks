@@ -13,10 +13,12 @@ from src.ui import print_info, print_success, print_error, print_warning, print_
 from src.filter import is_ignored
 
 import hashlib
+import concurrent.futures
 
 # --- 辅助函数 ---
 
 SYNC_STATE_FILENAME = ".sync_state"
+SYNC_LOG_FILENAME = ".sync_log"
 
 def calculate_md5(file_path: Path) -> str:
     """计算本地文件的 MD5 校验和"""
@@ -202,16 +204,56 @@ def wipe_remote(protocol, config):
 
 # --- 同步逻辑 ---
 
-def generate_sync_plan(source_struct, target_struct, cache_struct=None):
-    """对比两端结构，生成同步计划"""
+def generate_sync_plan(source_struct, target_struct, cache_struct=None, base_struct=None):
+    """
+    对比两端结构，生成同步计划。
+    base_struct: 上次同步时的状态，用于冲突检测。
+    """
     if cache_struct is None: cache_struct = {}
+    if base_struct is None: base_struct = {}
     
     all_paths = sorted(list(set(source_struct.keys()) | set(target_struct.keys())))
-    plan = {"upload": [], "delete": [], "skip": []}
-    stats = {"added": 0, "updated": 0, "deleted": 0}
+    plan = {"upload": [], "delete": [], "skip": [], "conflict": []}
+    stats = {"added": 0, "updated": 0, "deleted": 0, "conflict": 0}
     path_states = {}
     
     for path in all_paths:
+        # 基础冲突检测逻辑：
+        # 如果 source 和 target 都相对于 base 发生了变化，且变化结果不同，则为冲突。
+        is_source_changed = False
+        is_target_changed = False
+        
+        if path in source_struct:
+            if path not in base_struct: is_source_changed = True
+            elif source_struct[path].get("md5") != base_struct[path].get("md5"): is_source_changed = True
+            elif source_struct[path].get("size") != base_struct[path].get("size"): is_source_changed = True
+            
+        if path in target_struct:
+            if path not in base_struct: is_target_changed = True
+            elif target_struct[path].get("md5") != base_struct[path].get("md5"): is_target_changed = True
+            elif target_struct[path].get("size") != base_struct[path].get("size"): is_target_changed = True
+            
+        # 路径删除也被视为变化
+        if path in base_struct and path not in source_struct: is_source_changed = True
+        if path in base_struct and path not in target_struct: is_target_changed = True
+
+        if is_source_changed and is_target_changed:
+            # 进一步判断是否真的冲突（比如两边改成了同样的内容，则不算冲突）
+            content_match = False
+            if path in source_struct and path in target_struct:
+                if source_struct[path].get("md5") == target_struct[path].get("md5") and \
+                   source_struct[path].get("size") == target_struct[path].get("size"):
+                    content_match = True
+            elif path not in source_struct and path not in target_struct:
+                content_match = True
+                
+            if not content_match:
+                plan["conflict"].append(path)
+                path_states[path] = "conflict"
+                stats["conflict"] += 1
+                continue
+
+        # 正常的增量判断
         if path in source_struct and path not in target_struct:
             plan["upload"].append(path)
             path_states[path] = "added"
@@ -234,7 +276,6 @@ def generate_sync_plan(source_struct, target_struct, cache_struct=None):
                     if s_md5 and t_md5 and s_md5 != t_md5:
                         is_modified = True
                     elif s_md5 and not t_md5:
-                        # 如果目标没有 MD5 (比如直接扫描的远程结构)，对比缓存
                         c_md5 = cache_struct.get(path, {}).get("md5")
                         if c_md5 and s_md5 != c_md5:
                             is_modified = True
@@ -256,6 +297,9 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
     summary = f"[bold green]+ {stats['added']} 待{action_text}[/bold green]  " \
               f"[bold yellow]~ {stats['updated']} 待更新[/bold yellow]  " \
               f"[bold red]- {stats['deleted']} 待删除[/bold red]"
+    if stats.get("conflict"):
+        summary += f"  [bold magenta]! {stats['conflict']} 冲突[/bold magenta]"
+        
     console.print(Panel(summary, title="📊 同步摘要", expand=False))
     
     tree = Tree(f"[bold blue]📁 {project_name}[/bold blue]")
@@ -269,7 +313,7 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
         
         state = path_states[path]
         if state == "none" and not any(p.startswith(path + "/") for p in path_states if path_states[p] != "none"):
-            continue # 隐藏没有变化的目录（除非其子目录有变化）
+            continue
 
         style, label = "dim", ""
         if state == "added":
@@ -278,6 +322,8 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
             style, label = "bold red", "[待删除]"
         elif state == "updated":
             style, label = "bold yellow", "[待更新]"
+        elif state == "conflict":
+            style, label = "bold magenta", "[冲突]"
             
         icon = "📁" if (source_struct.get(path) or target_struct.get(path))["type"] == "dir" else "📄"
         display_text = f"[{style}]{icon} {name} {label}[/{style}]"
@@ -342,7 +388,8 @@ def sync_to_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
             if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False):
                 save_sync_state(project_path, local_struct)
                 push_remote_state(protocol, cfg, local_struct)
-                print_success("强制上传成功！")
+                log_action(project_path, "Force Upload", {"added": len(local_struct)})
+                print_success("首次同步完成！")
                 return True
         return False
 
@@ -356,18 +403,30 @@ def sync_to_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
         if not ask_confirm("仍要覆盖远程改动吗？"): return False
 
     target_for_plan = remote_state if remote_state else local_state
-    plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, local_state)
+    plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, base_struct=local_state)
     
+    if stats.get("conflict"):
+        print_warning(f"检测到 {stats['conflict']} 处冲突！")
+        if not ask_confirm("冲突项将以本地为准进行覆盖，是否继续？"):
+            return False
+            
     if not (plan["upload"] or plan["delete"]):
         print_success("已同步。")
         return True
 
     display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats)
-    if ask_confirm("确认上传增量更新？"):
+    
+    confirm = ask_input("确认执行同步计划？([bold green]Y[/bold green]继续 / [bold yellow]P[/bold yellow]仅预览退出 / [bold red]N[/bold red]取消)").upper()
+    if confirm == 'Y':
         if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False):
             save_sync_state(project_path, local_struct)
             push_remote_state(protocol, cfg, local_struct)
+            log_action(project_path, "Incremental Sync", stats)
+            print_success("同步成功！")
             return True
+    elif confirm == 'P':
+        print_info("预览结束，未执行任何操作。")
+        return False
     return False
 
 def sync_from_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
@@ -413,60 +472,164 @@ def sync_from_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
 def get_server_config(project_path):
     server_json = project_path / "server.json"
     if not server_json.exists():
-        print_error("未找到 server.json")
         return None
     try:
         with open(server_json, "r", encoding="utf-8") as f:
             config_all = json.load(f)
         protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
+        if not protocol: return None
         return protocol, config_all[protocol]
-    except Exception as e:
-        print_error(f"解析配置失败: {e}")
+    except Exception:
         return None
 
-def run_sync_action(project_root, config, protocol, plan, source_struct, is_download=False):
-    failed_files = []
-    try:
-        if protocol == "ftp":
-            with ftplib.FTP() as ftp:
-                ftp.set_pasv(True)
-                ftp.connect(config["host"], config.get("port", 21), timeout=60)
-                ftp.login(config["user"], config["password"])
-                base = normalize_path(config.get("remote_path") or ftp.pwd())
-                
-                if plan["upload"]:
-                    print_step(f"正在{'下载' if is_download else '上传'}文件...")
-                    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), TransferSpeedColumn(), console=console) as progress:
-                        for path in plan["upload"]:
-                            local_file = project_root / path
-                            remote_file = normalize_path(f"{base}/{path}")
-                            is_dir = source_struct.get(path, {}).get("type") == "dir"
-                            try:
-                                if is_download:
-                                    if is_dir: local_file.mkdir(parents=True, exist_ok=True)
-                                    else:
-                                        local_file.parent.mkdir(parents=True, exist_ok=True)
-                                        size = source_struct.get(path, {}).get("size", 0)
-                                        task = progress.add_task(f"下载 {path}", total=size)
-                                        with open(local_file, "wb") as f:
-                                            ftp.retrbinary(f"RETR {remote_file}", callback=lambda d: (f.write(d), progress.update(task, advance=len(d))))
-                                        progress.remove_task(task)
-                                else: # 上传
-                                    if is_dir: 
-                                        try: ftp.mkd(remote_file)
-                                        except: pass
-                                    else:
-                                        ensure_remote_dir_ftp(ftp, os.path.dirname(remote_file))
-                                        size = local_file.stat().st_size
-                                        task = progress.add_task(f"上传 {path}", total=size)
-                                        with open(local_file, "rb") as f:
-                                            ftp.storbinary(f"STOR {remote_file}", f, callback=lambda d: progress.update(task, advance=len(d)))
-                                        progress.remove_task(task)
-                            except Exception as e:
-                                failed_files.append((path, str(e)))
+def manage_host_config(project_path: Path):
+    """交互式管理主机配置"""
+    print_step("配置远程主机信息")
+    current = get_server_config(project_path)
+    
+    # 默认值设置
+    def_proto = "sftp"
+    def_host, def_port, def_user, def_pass, def_path = "", "", "", "", "/"
+    
+    if current:
+        def_proto, cfg = current
+        def_host = cfg.get("host", "")
+        def_port = str(cfg.get("port", ""))
+        def_user = cfg.get("user", "")
+        def_pass = cfg.get("password", "")
+        def_path = cfg.get("remote_path", "/")
 
-                if plan["delete"]:
-                    print_step(f"正在清理{'本地' if is_download else '远程'}文件...")
+    print_info("提示：直接回车将保留默认值/当前值")
+    
+    proto = ask_input(f"传输协议 (ftp/sftp) [当前: {def_proto}]") or def_proto
+    proto = proto.lower()
+    if proto not in ["ftp", "sftp"]:
+        print_error("无效的协议，仅支持 ftp 或 sftp")
+        return False
+    
+    if not def_port:
+        def_port = "21" if proto == "ftp" else "22"
+        
+    host = ask_input(f"主机地址 [当前: {def_host}]") or def_host
+    port = ask_input(f"端口号 [当前: {def_port}]") or def_port
+    user = ask_input(f"用户名 [当前: {def_user}]") or def_user
+    password = ask_input(f"密码 [当前: {'******' if def_pass else '未设置'}]") or def_pass
+    remote_path = ask_input(f"远程项目路径 [当前: {def_path}]") or def_path
+    
+    config_data = {
+        proto: {
+            "host": host,
+            "port": int(port) if port.isdigit() else (21 if proto == "ftp" else 22),
+            "user": user,
+            "password": password,
+            "remote_path": normalize_path(remote_path)
+        }
+    }
+    
+    try:
+        with open(project_path / "server.json", "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+        print_success("主机配置已保存到 server.json")
+        return True
+    except Exception as e:
+        print_error(f"保存配置失败: {e}")
+        return False
+
+def log_action(project_path: Path, action_type: str, stats: dict):
+    """记录同步操作到 .sync_log"""
+    log_file = project_path / SYNC_LOG_FILENAME
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] {action_type}: +{stats.get('added', 0)} added, ~{stats.get('updated', 0)} updated, -{stats.get('deleted', 0)} deleted\n"
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+    except Exception:
+        pass
+
+def run_sync_action(project_root, config, protocol, plan, source_struct, is_download=False):
+    """并发执行上传/下载逻辑"""
+    failed_files = []
+    
+    def process_file(path):
+        try:
+            if protocol == "ftp":
+                with ftplib.FTP() as ftp:
+                    ftp.set_pasv(True)
+                    ftp.connect(config["host"], config.get("port", 21), timeout=30)
+                    ftp.login(config["user"], config["password"])
+                    base = normalize_path(config.get("remote_path") or ftp.pwd())
+                    local_file = project_root / path
+                    remote_file = normalize_path(f"{base}/{path}")
+                    is_dir = source_struct.get(path, {}).get("type") == "dir"
+                    if is_download:
+                        if is_dir: local_file.mkdir(parents=True, exist_ok=True)
+                        else:
+                            local_file.parent.mkdir(parents=True, exist_ok=True)
+                            with open(local_file, "wb") as f:
+                                ftp.retrbinary(f"RETR {remote_file}", f.write)
+                    else:
+                        if is_dir: 
+                            try: ftp.mkd(remote_file)
+                            except: pass
+                        else:
+                            with open(local_file, "rb") as f:
+                                ftp.storbinary(f"STOR {remote_file}", f)
+            else:
+                import paramiko
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"], timeout=30)
+                sftp = ssh.open_sftp()
+                base = normalize_path(config.get("remote_path") or sftp.normalize("."))
+                local_file = project_root / path
+                remote_file = normalize_path(f"{base}/{path}")
+                is_dir = source_struct.get(path, {}).get("type") == "dir"
+                if is_download:
+                    if is_dir: local_file.mkdir(parents=True, exist_ok=True)
+                    else:
+                        local_file.parent.mkdir(parents=True, exist_ok=True)
+                        sftp.get(remote_file, str(local_file))
+                else:
+                    if is_dir:
+                        try: sftp.mkdir(remote_file)
+                        except: pass
+                    else:
+                        sftp.put(str(local_file), remote_file)
+                sftp.close(); ssh.close()
+            return True, path
+        except Exception as e:
+            return False, (path, str(e))
+
+    print_step(f"正在准备{'下载' if is_download else '上传'}队列...")
+    dirs = [p for p in plan["upload"] if source_struct.get(p, {}).get("type") == "dir"]
+    files = [p for p in plan["upload"] if source_struct.get(p, {}).get("type") != "dir"]
+    
+    if dirs:
+        for d in dirs:
+            success, res = process_file(d)
+            if not success: failed_files.append(res)
+
+    if files:
+        action_name = "下载" if is_download else "上传"
+        print_step(f"正在并发{action_name}文件 ({len(files)} 个, 并发数: 4)...")
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), TransferSpeedColumn(), console=console) as progress:
+            task = progress.add_task(f"{action_name}中...", total=len(files))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_path = {executor.submit(process_file, p): p for p in files}
+                for future in concurrent.futures.as_completed(future_to_path):
+                    success, result = future.result()
+                    if not success: failed_files.append(result)
+                    progress.update(task, advance=1)
+
+    if plan["delete"]:
+        print_step(f"正在清理{'本地' if is_download else '远程'}多余文件...")
+        try:
+            if protocol == "ftp":
+                with ftplib.FTP() as ftp:
+                    ftp.set_pasv(True)
+                    ftp.connect(config["host"], config.get("port", 21), timeout=60)
+                    ftp.login(config["user"], config["password"])
+                    base = normalize_path(config.get("remote_path") or ftp.pwd())
                     for path in reversed(plan["delete"]):
                         try:
                             if is_download:
@@ -477,47 +640,14 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                                 item = normalize_path(f"{base}/{path}")
                                 try: ftp.delete(item)
                                 except: ftp.rmd(item)
-                        except Exception as e:
-                            failed_files.append((path, str(e)))
-        else:
-            import paramiko
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
-            sftp = ssh.open_sftp()
-            base = normalize_path(config.get("remote_path") or sftp.normalize("."))
-            
-            if plan["upload"]:
-                print_step(f"正在{'下载' if is_download else '上传'}文件...")
-                with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), TransferSpeedColumn(), console=console) as progress:
-                    for path in plan["upload"]:
-                        local_file = project_root / path
-                        remote_file = normalize_path(f"{base}/{path}")
-                        is_dir = source_struct.get(path, {}).get("type") == "dir"
-                        try:
-                            if is_download:
-                                if is_dir: local_file.mkdir(parents=True, exist_ok=True)
-                                else:
-                                    local_file.parent.mkdir(parents=True, exist_ok=True)
-                                    size = source_struct.get(path, {}).get("size", 0)
-                                    task = progress.add_task(f"下载 {path}", total=size)
-                                    sftp.get(remote_file, str(local_file), callback=lambda c, t: progress.update(task, completed=c))
-                                    progress.remove_task(task)
-                            else: # 上传
-                                if is_dir:
-                                    try: sftp.mkdir(remote_file)
-                                    except: pass
-                                else:
-                                    ensure_remote_dir_sftp(sftp, os.path.dirname(remote_file))
-                                    size = local_file.stat().st_size
-                                    task = progress.add_task(f"上传 {path}", total=size)
-                                    sftp.put(str(local_file), remote_file, callback=lambda c, t: progress.update(task, completed=c))
-                                    progress.remove_task(task)
-                        except Exception as e:
-                            failed_files.append((path, str(e)))
-
-            if plan["delete"]:
-                print_step(f"正在清理{'本地' if is_download else '远程'}文件...")
+                        except Exception as e: failed_files.append((path, str(e)))
+            else:
+                import paramiko
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
+                sftp = ssh.open_sftp()
+                base = normalize_path(config.get("remote_path") or sftp.normalize("."))
                 for path in reversed(plan["delete"]):
                     try:
                         if is_download:
@@ -528,18 +658,15 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                             item = normalize_path(f"{base}/{path}")
                             try: sftp.remove(item)
                             except: sftp.rmdir(item)
-                    except Exception as e:
-                        failed_files.append((path, str(e)))
-            sftp.close(); ssh.close()
+                    except Exception as e: failed_files.append((path, str(e)))
+                sftp.close(); ssh.close()
+        except Exception as e:
+            print_error(f"清理阶段失败: {e}")
 
-        if failed_files:
-            print_warning("\n⚠️ 部分失败：")
-            for p, e in failed_files[:5]: print_error(f"  - {p}: {e}")
-            return False
-        return True
-    except Exception as e:
-        print_error(f"执行失败: {e}")
+    if failed_files:
+        print_warning(f"\n⚠️ 操作完成，但有 {len(failed_files)} 个项处理失败。")
         return False
+    return True
 
 # --- 辅助工具 ---
 
