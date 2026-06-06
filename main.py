@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Add src to path if needed
 from src.site_info import get_site_url
-from src.filter import get_ignore_spec
+from src.filter import get_ignore_spec, ensure_essential_ignores
 from src.link_gen import write_link_md
 from src.ui import print_success, print_info, print_error, print_step, ask_input, print_menu, print_header, print_history_table, console
 from src.sync import sync_to_remote, sync_from_remote
@@ -45,20 +45,28 @@ def select_project_workflow():
         # 尝试作为序号解析
         if path_input.isdigit():
             idx = int(path_input) - 1
-            if 0 <= idx < len(history):
+            if history and 0 <= idx < len(history):
                 project_path = Path(history[idx]['path'])
             else:
                 print_error("无效的序号，请重新输入...")
                 input("\n按回车键继续...")
                 continue
         else:
-            project_path = Path(path_input).resolve()
+            # 清理路径字符串
+            clean_path = path_input.strip('"').strip("'")
+            project_path = Path(clean_path).resolve()
             
         if not project_path.exists() or not project_path.is_dir():
             print_error(f"不是有效的目录: {project_path}")
             input("\n按回车键继续...")
             continue
         
+        # 自动处理忽略文件
+        try:
+            ensure_essential_ignores(project_path)
+        except Exception as e:
+            print_error(f"初始化忽略文件失败: {e}")
+
         # 保存到历史记录
         save_history(str(project_path))
         return project_path
