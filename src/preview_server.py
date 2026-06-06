@@ -1,7 +1,6 @@
 import http.server
 import socketserver
 import threading
-import webbrowser
 import os
 import time
 from functools import partial
@@ -27,7 +26,6 @@ class PreviewServer:
         if self.is_running:
             if self.project_path == project_path:
                 print_info(f"预览服务器已在运行: http://localhost:{self.port}")
-                webbrowser.open(f"http://localhost:{self.port}")
                 return True
             else:
                 self.stop()
@@ -53,7 +51,6 @@ class PreviewServer:
                         self.port = current_port
                         self.is_running = True
                         print_success(f"\n本地预览已开启: http://localhost:{current_port}")
-                        webbrowser.open(f"http://localhost:{current_port}")
                         startup_event.set()
                         httpd.serve_forever()
                         break
