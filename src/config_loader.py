@@ -4,6 +4,8 @@ from src.ui import print_warning, print_error, print_info
 
 # 定义默认配置，确保程序在配置缺失时仍能运行
 DEFAULT_CONFIG = {
+    "max_history": 10,
+    "max_workers": 3,
     "ignore": [
         ".gitignore",
         ".surgeignore"
@@ -34,6 +36,10 @@ def validate_config(config: dict) -> dict:
     # 验证并更新顶层字段
     for key in ["project_icon", "link_icon", "folder_icon"]:
         if key in config and isinstance(config[key], str):
+            validated[key] = config[key]
+
+    for key in ["max_history", "max_workers"]:
+        if key in config and isinstance(config[key], int):
             validated[key] = config[key]
             
     # 验证并合并 ignore 列表
