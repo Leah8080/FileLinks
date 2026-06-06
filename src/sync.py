@@ -306,6 +306,10 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
     nodes = {"": tree}
     all_paths = sorted(path_states.keys())
     
+    from src.config_loader import load_config
+    config = load_config()
+    icon_map = config.get("icons", {})
+
     for path in all_paths:
         parts = path.split("/")
         parent = "/".join(parts[:-1])
@@ -324,7 +328,14 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
         elif state == "conflict":
             style, label = "bold magenta", "[冲突]"
             
-        icon = "📁" if (source_struct.get(path) or target_struct.get(path))["type"] == "dir" else "📄"
+        is_dir = (source_struct.get(path) or target_struct.get(path))["type"] == "dir"
+        
+        if is_dir:
+            icon = "📁"
+        else:
+            # 根据扩展名获取图标
+            ext = Path(name).suffix.lower()
+            icon = icon_map.get(ext, "📄")
         
         # 根据状态为文件名也添加颜色
         display_text = f"[{style}]{icon} {name} {label}[/{style}]"
