@@ -116,6 +116,7 @@ def fetch_remote_state(protocol, config):
 
 def push_remote_state(protocol, config, state):
     """将状态字典上传到远程作为 .sync_state"""
+    print_step("正在更新云端同步状态...")
     state_json = json.dumps(state, indent=2, ensure_ascii=False)
     try:
         if protocol == "ftp":
