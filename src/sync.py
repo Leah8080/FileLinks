@@ -429,7 +429,7 @@ def sync_to_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
         print_success("本地与远程已同步，无需操作。")
         return True
 
-    confirm = ask_input("确认执行同步计划？([bold green]Y[/bold green]继续 / [bold yellow]P[/bold yellow]仅预览退出 / [bold red]N[/bold red]取消)").upper()
+    confirm = ask_input("确认执行同步计划？([bold green]Y[/bold green]确定 / [bold yellow]P[/bold yellow]仅预览 / [bold red]N[/bold red]取消)").upper()
     if confirm == 'Y':
         if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False):
             save_sync_state(project_path, local_struct)
