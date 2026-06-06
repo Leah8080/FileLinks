@@ -405,17 +405,18 @@ def sync_to_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
     target_for_plan = remote_state if remote_state else local_state
     plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, base_struct=local_state)
     
+    # 无论是否有变动，都先显示树供预览
+    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats)
+
     if stats.get("conflict"):
         print_warning(f"检测到 {stats['conflict']} 处冲突！")
         if not ask_confirm("冲突项将以本地为准进行覆盖，是否继续？"):
             return False
             
     if not (plan["upload"] or plan["delete"]):
-        print_success("已同步。")
+        print_success("本地与远程已同步，无需操作。")
         return True
 
-    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats)
-    
     confirm = ask_input("确认执行同步计划？([bold green]Y[/bold green]继续 / [bold yellow]P[/bold yellow]仅预览退出 / [bold red]N[/bold red]取消)").upper()
     if confirm == 'Y':
         if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False):
@@ -453,12 +454,13 @@ def sync_from_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
         local_struct = get_local_structure(project_path, project_path, spec)
         plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
 
+    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True)
+
     if not (plan["upload"] or plan["delete"]):
-        print_success("已是最新。")
+        print_success("本地已是最新，无需操作。")
         save_sync_state(project_path, remote_state)
         return True
 
-    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True)
     if ask_confirm("确认同步？"):
         if run_sync_action(project_path, cfg, protocol, plan, remote_state, is_download=True):
             new_local = get_local_structure(project_path, project_path, spec)
