@@ -515,9 +515,9 @@ def manage_host_config(project_path: Path):
         
     host = ask_input(f"主机地址 [当前: [magenta]{def_host}[/magenta]]") or def_host
     port = ask_input(f"端口号 [当前: [magenta]{def_port}[/magenta]]") or def_port
-    user = ask_input(f"用户名 [当前: [magenta]{def_user}[/magenta]]") or def_user
+    user = ask_input(f"账户 [当前: [magenta]{def_user}[/magenta]]") or def_user
     password = ask_input(f"密码 [当前: [magenta]{'******' if def_pass else '未设置'}[/magenta]]") or def_pass
-    remote_path = ask_input(f"远程项目路径 [当前: [magenta]{def_path}[/magenta]]") or def_path
+    remote_path = ask_input(f"远程路径 [当前: [magenta]{def_path}[/magenta]]\n⏳ 请输入") or def_path
     
     config_data = {
         proto: {

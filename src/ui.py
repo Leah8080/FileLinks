@@ -20,7 +20,7 @@ def print_error(message: str):
     console.print(f"[bold red]❌ {message}[/bold red]")
 
 def print_step(message: str):
-    console.print(f"\n[bold blue]➡️  {message}[/bold blue]")
+    console.print(f"\n[bold blue]➡️ {message}[/bold blue]")
 
 def print_summary(total: int, links: int, filtered: int):
     table = Table(title="📊 摘要信息", show_header=True, header_style="bold magenta")
