@@ -289,129 +289,143 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
 
 # --- 工作流 ---
 
-def sync_to_remote(project_path: Path, spec: pathspec.PathSpec):
-    server_json = project_path / "server.json"
-    if not server_json.exists():
-        print_error("未找到 server.json")
-        return False
-    
-    try:
-        with open(server_json, "r", encoding="utf-8") as f:
-            config_all = json.load(f)
-        protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
-        config = config_all[protocol]
-    except Exception as e:
-        print_error(f"配置文件解析失败: {e}")
-        return False
+def smart_sync(project_path: Path, spec: pathspec.PathSpec):
+    """智能同步：自动判断增量更新"""
+    config = get_server_config(project_path)
+    if not config: return False
+    protocol, cfg = config
 
-    print_server_info(protocol, config)
-    
     local_struct = get_local_structure(project_path, project_path, spec)
     local_state = load_sync_state(project_path)
-    remote_state = fetch_remote_state(protocol, config)
+    remote_state = fetch_remote_state(protocol, cfg)
 
-    # 情况 1: 首次同步 (本地没有状态)
+    # 1. 如果两边都没有状态，引导首次同步
+    if not local_state and not remote_state:
+        print_warning("检测到首次同步。")
+        choice = ask_input("是以本地为准[bold green]上传(U)[/bold green]，还是以云端为准[bold cyan]下载(D)[/bold cyan]？(U/D)")
+        if choice.upper() == 'U':
+            return sync_to_remote(project_path, spec, force=True)
+        elif choice.upper() == 'D':
+            return sync_from_remote(project_path, spec, force=True)
+        return False
+
+    # 2. 如果只有一方有状态，或者状态不一致，计算差异
+    # 智能同步的逻辑：优先以上传本地改动为主，但如果云端有更新，则提示
+    print_info("正在分析增量更新...")
+    
+    # 获取真正的远程结构以防状态文件过时
+    if not remote_state:
+        with console.status("[cyan]正在扫描远程结构..."):
+            remote_state = get_real_remote_structure(protocol, cfg)
+
+    # 这里的智能逻辑可以更复杂，目前先实现一个稳妥的：
+    # 对比本地 vs 记录，对比云端 vs 记录
+    # 如果只有一侧变了，自动处理；如果两侧都变了，提示冲突。
+    
+    # 简化版：目前先按“同步本地”的增强版处理
+    return sync_to_remote(project_path, spec, force=False)
+
+def sync_to_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
+    config = get_server_config(project_path)
+    if not config: return False
+    protocol, cfg = config
+
+    local_struct = get_local_structure(project_path, project_path, spec)
+    local_state = load_sync_state(project_path)
+    remote_state = fetch_remote_state(protocol, cfg)
+
+    if force:
+        print_warning("⚠️ [bold red]强制上传模式[/bold red]：将以本地文件为准，覆盖远程内容。")
+        if not ask_confirm("确认清空远程并重新上传吗？"): return False
+        if wipe_remote(protocol, cfg):
+            plan = {"upload": sorted(local_struct.keys()), "delete": [], "skip": []}
+            if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False):
+                save_sync_state(project_path, local_struct)
+                push_remote_state(protocol, cfg, local_struct)
+                print_success("强制上传成功！")
+                return True
+        return False
+
+    # 增量上传逻辑
     if not local_state:
-        print_warning("检测到首次同步（本地无记录）。")
-        if ask_confirm("是否清空远程目录并完整上传本地项目？"):
-            if wipe_remote(protocol, config):
-                plan = {"upload": sorted(local_struct.keys()), "delete": [], "skip": []}
-                # 执行上传...
-                if run_sync_action(project_path, config, protocol, plan, local_struct, is_download=False):
-                    save_sync_state(project_path, local_struct)
-                    push_remote_state(protocol, config, local_struct)
-                    print_success("首次同步完成！")
-                    return True
-            return False
-        else:
-            print_info("已取消。如果你想保留远程文件，请先执行“同步云端”以初始化状态。")
-            return False
+        print_warning("本地无同步记录。请使用“强制上传”或先执行“强制下载”初始化状态。")
+        return False
 
-    # 情况 2: 增量同步
     if remote_state and remote_state != local_state:
-        print_warning("⚠️ 注意：远程状态与本地记录不符，远程文件可能已被他人修改。")
-        if not ask_confirm("仍要以本地为准进行覆盖同步吗？"):
-            return False
+        print_warning("⚠️ 远程状态已更新，本地记录已过时。")
+        if not ask_confirm("仍要覆盖远程改动吗？"): return False
 
-    # 使用本地当前结构作为源，远程状态（或本地状态）作为目标
     target_for_plan = remote_state if remote_state else local_state
     plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, local_state)
     
     if not (plan["upload"] or plan["delete"]):
-        print_success("本地与远程已同步。")
-        # 即使没操作，也确保远程有状态文件
-        if not remote_state: push_remote_state(protocol, config, local_struct)
+        print_success("已同步。")
         return True
 
     display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats)
-    if ask_confirm("确认执行同步计划？"):
-        if run_sync_action(project_path, config, protocol, plan, local_struct, is_download=False):
+    if ask_confirm("确认上传增量更新？"):
+        if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False):
             save_sync_state(project_path, local_struct)
-            push_remote_state(protocol, config, local_struct)
-            print_success("同步成功！")
+            push_remote_state(protocol, cfg, local_struct)
             return True
     return False
 
-def sync_from_remote(project_path: Path, spec: pathspec.PathSpec):
-    server_json = project_path / "server.json"
-    if not server_json.exists():
-        print_error("未找到 server.json")
-        return False
-    
-    try:
-        with open(server_json, "r", encoding="utf-8") as f:
-            config_all = json.load(f)
-        protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
-        config = config_all[protocol]
-    except Exception as e:
-        print_error(f"配置文件解析失败: {e}")
-        return False
+def sync_from_remote(project_path: Path, spec: pathspec.PathSpec, force=False):
+    config = get_server_config(project_path)
+    if not config: return False
+    protocol, cfg = config
 
-    print_server_info(protocol, config)
-    
     local_state = load_sync_state(project_path)
-    remote_state = fetch_remote_state(protocol, config)
+    remote_state = fetch_remote_state(protocol, cfg)
     
-    # 获取真正的远程结构 (如果远程没有状态文件)
     if not remote_state:
-        print_info("远程没有状态文件，正在扫描远程结构...")
-        with console.status("[cyan]扫描中..."):
-            remote_state = get_real_remote_structure(protocol, config)
+        with console.status("[cyan]扫描远程结构..."):
+            remote_state = get_real_remote_structure(protocol, cfg)
 
-    # 情况 1: 本地没有状态 (首次下载)
-    if not local_state:
-        print_warning("检测到本地无同步记录。")
-        if not ask_confirm("是否从云端完整下载项目到本地？"):
-            return False
-        local_struct = {}
-    else:
+    if force:
+        print_warning("⚠️ [bold red]强制下载模式[/bold red]：将以云端文件为准，覆盖本地内容。")
+        if not ask_confirm("确认同步云端到本地吗？(本地多余文件将被删除)"): return False
         local_struct = get_local_structure(project_path, project_path, spec)
+        plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
+    else:
+        if not local_state:
+            print_warning("本地无记录，请使用“强制下载”。")
+            return False
+        local_struct = get_local_structure(project_path, project_path, spec)
+        plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
 
-    # 计划：源=远程状态，目标=本地当前
-    plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
-    
     if not (plan["upload"] or plan["delete"]):
-        print_success("本地已是最新。")
-        save_sync_state(project_path, remote_state) # 确保本地有状态
+        print_success("已是最新。")
+        save_sync_state(project_path, remote_state)
         return True
 
     display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True)
-    if ask_confirm("确认从云端同步到本地？(本地多余文件将被删除)"):
-        if run_sync_action(project_path, config, protocol, plan, remote_state, is_download=True):
-            # 重新扫描本地以确保状态准确
+    if ask_confirm("确认同步？"):
+        if run_sync_action(project_path, cfg, protocol, plan, remote_state, is_download=True):
             new_local = get_local_structure(project_path, project_path, spec)
             save_sync_state(project_path, new_local)
-            push_remote_state(protocol, config, new_local)
-            print_success("云端同步完成！")
+            push_remote_state(protocol, cfg, new_local)
             return True
     return False
 
 # --- 执行底座 ---
 
+def get_server_config(project_path):
+    server_json = project_path / "server.json"
+    if not server_json.exists():
+        print_error("未找到 server.json")
+        return None
+    try:
+        with open(server_json, "r", encoding="utf-8") as f:
+            config_all = json.load(f)
+        protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
+        return protocol, config_all[protocol]
+    except Exception as e:
+        print_error(f"解析配置失败: {e}")
+        return None
+
 def run_sync_action(project_root, config, protocol, plan, source_struct, is_download=False):
-    """统一的执行逻辑"""
     failed_files = []
-    
     try:
         if protocol == "ftp":
             with ftplib.FTP() as ftp:
@@ -427,7 +441,6 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                             local_file = project_root / path
                             remote_file = normalize_path(f"{base}/{path}")
                             is_dir = source_struct.get(path, {}).get("type") == "dir"
-                            
                             try:
                                 if is_download:
                                     if is_dir: local_file.mkdir(parents=True, exist_ok=True)
@@ -453,7 +466,7 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                                 failed_files.append((path, str(e)))
 
                 if plan["delete"]:
-                    print_step(f"正在清理{'本地' if is_download else '远程'}多余文件...")
+                    print_step(f"正在清理{'本地' if is_download else '远程'}文件...")
                     for path in reversed(plan["delete"]):
                         try:
                             if is_download:
@@ -481,7 +494,6 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                         local_file = project_root / path
                         remote_file = normalize_path(f"{base}/{path}")
                         is_dir = source_struct.get(path, {}).get("type") == "dir"
-                        
                         try:
                             if is_download:
                                 if is_dir: local_file.mkdir(parents=True, exist_ok=True)
@@ -505,7 +517,7 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                             failed_files.append((path, str(e)))
 
             if plan["delete"]:
-                print_step(f"正在清理{'本地' if is_download else '远程'}多余文件...")
+                print_step(f"正在清理{'本地' if is_download else '远程'}文件...")
                 for path in reversed(plan["delete"]):
                     try:
                         if is_download:
@@ -521,8 +533,8 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
             sftp.close(); ssh.close()
 
         if failed_files:
-            print_warning("\n⚠️ 操作完成，但部分文件失败：")
-            for p, e in failed_files[:10]: print_error(f"  - {p}: {e}")
+            print_warning("\n⚠️ 部分失败：")
+            for p, e in failed_files[:5]: print_error(f"  - {p}: {e}")
             return False
         return True
     except Exception as e:
@@ -532,7 +544,6 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
 # --- 辅助工具 ---
 
 def get_real_remote_structure(protocol, config):
-    """手动扫描远程结构 (没有状态文件时)"""
     if protocol == "ftp":
         with ftplib.FTP() as ftp:
             ftp.set_pasv(True)
@@ -580,7 +591,7 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote):
     return structure
 
 def ensure_remote_dir_ftp(ftp, path):
-    if path == "/": return
+    if path == "/" or not path: return
     parts = path.strip("/").split("/")
     curr = ""
     for p in parts:
@@ -589,7 +600,7 @@ def ensure_remote_dir_ftp(ftp, path):
         except: pass
 
 def ensure_remote_dir_sftp(sftp, path):
-    if path == "/": return
+    if path == "/" or not path: return
     parts = path.strip("/").split("/")
     curr = ""
     for p in parts:

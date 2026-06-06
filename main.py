@@ -95,8 +95,9 @@ def main():
             menu_content += "[dim]─[/dim]" * 60 + "\n"
             
             options = [
-                "同步本地 [dim]上传本地文件到远程主机[/dim]", 
-                "同步云端 [dim]从远程主机下载文件到本地[/dim]", 
+                "智能同步 [dim]自动判断增量更新，省时省力[/dim]", 
+                "强制上传 [dim]以本地为准覆盖云端，适合首次推送[/dim]", 
+                "强制下载 [dim]以云端为准覆盖本地，适合重新拉取[/dim]", 
                 "生成链接 [dim]为项目文件生成访问链接[/dim]", 
                 "切换项目 [dim]选择其他网站项目路径[/dim]", 
                 "退出脚本"
@@ -109,15 +110,15 @@ def main():
             from rich.panel import Panel
             console.print(Panel(menu_content.strip(), title=f"[bold cyan]🚀 {menu_title}[/bold cyan]", border_style="cyan", expand=False))
             
-            choice = ask_input("请选择操作 (0-4)")
+            choice = ask_input("请选择操作 (0-5)")
             
             if choice == "1":
-                # 同步本地
-                print_step("准备同步到远程...")
+                # 智能同步
+                print_step("正在执行智能同步...")
                 try:
                     spec = get_ignore_spec(project_path)
-                    if sync_to_remote(project_path, spec):
-                        # 同步成功后询问是否生成链接
+                    from src.sync import smart_sync
+                    if smart_sync(project_path, spec):
                         from src.ui import ask_confirm
                         if ask_confirm("同步完成，是否立即生成文件链接?"):
                             generate_links_workflow(project_path)
@@ -126,20 +127,33 @@ def main():
                 input("\n按回车键继续...")
             
             elif choice == "2":
-                # 同步云端
-                print_step("准备从远程同步...")
+                # 强制上传
+                print_step("准备强制上传到远程...")
                 try:
                     spec = get_ignore_spec(project_path)
-                    if sync_from_remote(project_path, spec):
-                        # 同步成功后询问是否生成链接
+                    # 强制上传即为之前的 sync_to_remote，逻辑中包含 wipe 提示
+                    if sync_to_remote(project_path, spec, force=True):
                         from src.ui import ask_confirm
                         if ask_confirm("同步完成，是否立即生成文件链接?"):
                             generate_links_workflow(project_path)
                 except Exception as e:
-                    print_error(f"同步失败: {e}")
+                    print_error(f"上传失败: {e}")
                 input("\n按回车键继续...")
                 
             elif choice == "3":
+                # 强制下载
+                print_step("准备从远程强制下载...")
+                try:
+                    spec = get_ignore_spec(project_path)
+                    if sync_from_remote(project_path, spec, force=True):
+                        from src.ui import ask_confirm
+                        if ask_confirm("同步完成，是否立即生成文件链接?"):
+                            generate_links_workflow(project_path)
+                except Exception as e:
+                    print_error(f"下载失败: {e}")
+                input("\n按回车键继续...")
+                
+            elif choice == "4":
                 # 生成链接
                 try:
                     generate_links_workflow(project_path)
@@ -147,7 +161,7 @@ def main():
                     print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
             
-            elif choice == "4":
+            elif choice == "5":
                 # 切换项目
                 project_path = select_project_workflow()
                 
