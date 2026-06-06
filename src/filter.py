@@ -41,9 +41,7 @@ def ensure_essential_ignores(project_path: Path):
         with open(target_file, "a", encoding="utf-8") as f:
             f.write(content_to_append)
         
-        if not target_file.exists():
-            print_success(f"已创建忽略配置文件: {target_file.name}")
-        print_success(f"已自动更新 {target_file.name}，增加了: {', '.join(missing_files)}")
+        # 已移除 print_success 提示，实现静默更新
 
 def get_ignore_spec(project_path: Path):
     # 在获取 spec 前先确保物理文件已更新
