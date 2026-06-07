@@ -4,7 +4,8 @@ from src.sync.manager import (
     sync_from_remote,
     get_server_config,
     manage_host_config,
-    log_action
+    log_action,
+    preview_remote_structure
 )
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     'sync_from_remote',
     'get_server_config',
     'manage_host_config',
-    'log_action'
+    'log_action',
+    'preview_remote_structure'
 ]

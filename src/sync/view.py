@@ -53,3 +53,36 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
             nodes[path] = nodes[parent].add(display_text)
             
     console.print(tree)
+
+def display_remote_tree(remote_struct, project_name):
+    """显示远程主机的文件树结构"""
+    tree = Tree(f"[bold blue]🖥️ 远程主机: {project_name}[/bold blue]")
+    nodes = {"": tree}
+    all_paths = sorted(remote_struct.keys())
+    
+    config = load_config()
+    icon_map = config.get("icons", {})
+
+    for path in all_paths:
+        parts = path.split("/")
+        parent = "/".join(parts[:-1])
+        name = parts[-1]
+        
+        info = remote_struct[path]
+        is_dir = info["type"] == "dir"
+        
+        if is_dir:
+            icon = "📁"
+            style = "bold blue"
+        else:
+            ext = Path(name).suffix.lower()
+            icon = icon_map.get(ext, "📄")
+            style = "green"
+        
+        size_str = f" [dim]({info['size']} bytes)[/dim]" if not is_dir else ""
+        display_text = f"[{style}]{icon} {name}[/{style}]{size_str}"
+        
+        if parent in nodes:
+            nodes[path] = nodes[parent].add(display_text)
+            
+    console.print(Panel(tree, title="🌳 远程文件树预览", border_style="cyan", expand=False))
