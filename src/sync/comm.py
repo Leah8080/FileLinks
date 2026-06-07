@@ -4,7 +4,7 @@ import stat
 import concurrent.futures
 import shutil
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TransferSpeedColumn
-from src.ui import print_step, print_error, print_warning, console
+from src.ui import print_step, print_info, print_error, print_warning, console
 from src.sync.scanner import SYNC_STATE_FILENAME, normalize_path
 from src.config_loader import load_config
 
@@ -259,23 +259,62 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
     return True
 
 def get_real_remote_structure(protocol, config):
-    if protocol == "ftp":
-        with ftplib.FTP() as ftp:
-            ftp.set_pasv(True)
-            ftp.connect(config["host"], config.get("port", 21), timeout=30)
-            ftp.login(config["user"], config["password"])
-            base = normalize_path(config.get("remote_path") or ftp.pwd())
-            return get_remote_structure_ftp(ftp, base, base)
-    else:
-        import paramiko
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
-        sftp = ssh.open_sftp()
-        base = normalize_path(config.get("remote_path") or sftp.normalize("."))
-        struct = get_remote_structure_sftp(sftp, base, base)
-        sftp.close(); ssh.close()
-        return struct
+    try:
+        if protocol == "ftp":
+            with ftplib.FTP() as ftp:
+                ftp.set_pasv(True)
+                ftp.connect(config["host"], config.get("port", 21), timeout=30)
+                ftp.login(config["user"], config["password"])
+                remote_path = config.get("remote_path")
+                pwd = ftp.pwd()
+                base = normalize_path(remote_path if remote_path and remote_path != "/" else pwd)
+                print_info(f"正在读取 FTP 远程结构, 根目录: {base}")
+                return get_remote_structure_ftp(ftp, base, base)
+        else:
+            import paramiko
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
+            sftp = ssh.open_sftp()
+            remote_path = config.get("remote_path")
+            
+            # 确定基础路径
+            try:
+                # 尝试获取当前目录的标准化路径（在翼龙面板通常是 /）
+                try:
+                    home = normalize_path(sftp.normalize("."))
+                except:
+                    home = "/"
+
+                if not remote_path or remote_path == "/":
+                    base = home
+                else:
+                    base = normalize_path(remote_path)
+                
+                # 验证路径是否存在
+                try:
+                    sftp.stat(base)
+                except:
+                    # 如果指定的路径失败，且看起来像是绝对路径，尝试回退到 /
+                    if base != "/" and base != home:
+                        print_warning(f"无法访问路径 {base}，检测到可能是翼龙面板等受限环境。")
+                        print_info("提示：请在‘主机配置’中将远程路径设为 / 或留空。")
+                        print_step("尝试以根目录 '/' 重新读取...")
+                        base = "/"
+                        try:
+                            sftp.stat(base)
+                        except:
+                            print_error("仍无法访问远程根目录。")
+                            return {}
+                
+                print_info(f"正在读取 SFTP 远程结构, 根目录: {base}")
+                struct = get_remote_structure_sftp(sftp, base, base)
+            finally:
+                sftp.close(); ssh.close()
+            return struct
+    except Exception as e:
+        print_error(f"连接或读取远程结构失败: {e}")
+        return {}
 
 def get_remote_structure_ftp(ftp, current_remote, base_remote):
     structure = {}
@@ -288,19 +327,27 @@ def get_remote_structure_ftp(ftp, current_remote, base_remote):
                 structure.update(get_remote_structure_ftp(ftp, f"{current_remote}/{name}", base_remote))
             else:
                 structure[rel_path] = {"type": "file", "size": int(facts.get('size', 0))}
-    except: pass
+    except Exception as e:
+        print_warning(f"无法读取远程目录 {current_remote}: {e}")
     return structure
 
 def get_remote_structure_sftp(sftp, current_remote, base_remote):
     structure = {}
     try:
-        for item in sftp.listdir_attr(current_remote):
+        # 尝试列出目录内容
+        items = sftp.listdir_attr(current_remote)
+        for item in items:
             if item.filename in (".", "..", SYNC_STATE_FILENAME): continue
-            rel_path = normalize_path(f"{current_remote}/{item.filename}")[len(base_remote):].lstrip("/")
+            
+            # 构造路径时避免双斜杠
+            full_path = current_remote.rstrip("/") + "/" + item.filename
+            rel_path = normalize_path(full_path)[len(base_remote):].lstrip("/")
+            
             if stat.S_ISDIR(item.st_mode):
                 structure[rel_path] = {"type": "dir", "size": 0}
-                structure.update(get_remote_structure_sftp(sftp, f"{current_remote}/{item.filename}", base_remote))
+                structure.update(get_remote_structure_sftp(sftp, full_path, base_remote))
             else:
                 structure[rel_path] = {"type": "file", "size": item.st_size}
-    except: pass
+    except Exception as e:
+        print_warning(f"无法读取远程目录 {current_remote}: {e}")
     return structure

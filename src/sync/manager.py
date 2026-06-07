@@ -5,7 +5,7 @@ from src.ui import print_info, print_success, print_error, print_warning, print_
 from src.sync.scanner import get_local_structure, load_sync_state, save_sync_state, SYNC_LOG_FILENAME, normalize_path
 from src.sync.engine import generate_sync_plan
 from src.sync.comm import fetch_remote_state, push_remote_state, wipe_remote, run_sync_action, get_real_remote_structure
-from src.sync.view import display_sync_tree
+from src.sync.view import display_sync_tree, display_remote_tree
 
 def get_server_config(project_path):
     server_json = project_path / "server.json"
@@ -52,6 +52,8 @@ def manage_host_config(project_path: Path):
     port = ask_input(f"端口号 [当前: [magenta]{def_port}[/magenta]]") or def_port
     user = ask_input(f"账户 [当前: [magenta]{def_user}[/magenta]]") or def_user
     password = ask_input(f"密码 [当前: [magenta]{'******' if def_pass else '未设置'}[/magenta]]") or def_pass
+    
+    print_info(r"提示：翼龙面板(Pterodactyl)主机用户请将远程路径设为 / 或留空")
     remote_path = ask_input(f"远程路径 [当前: [magenta]{def_path}[/magenta]]\n⏳ 请输入") or def_path
     
     config_data = {
@@ -207,3 +209,27 @@ def sync_from_remote(project_path: Path, spec, force=False):
             push_remote_state(protocol, cfg, new_local)
             return True
     return False
+
+def preview_remote_structure(project_path: Path):
+    """获取并显示远程主机的文件树预览"""
+    config = get_server_config(project_path)
+    if not config:
+        print_error("未配置远程主机信息，请先进行“主机配置”。")
+        return False
+    
+    protocol, cfg = config
+    print_step(f"正在连接远程主机 ({protocol.upper()}) 并获取文件树...")
+    
+    try:
+        with console.status("[cyan]正在扫描远程文件系统..."):
+            remote_struct = get_real_remote_structure(protocol, cfg)
+        
+        if not remote_struct:
+            print_warning("远程目录为空或无法读取。")
+            return True
+        
+        display_remote_tree(remote_struct, project_path.name)
+        return True
+    except Exception as e:
+        print_error(f"无法获取远程结构: {e}")
+        return False

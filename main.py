@@ -128,10 +128,11 @@ def main():
                 "📤 [magenta]强制推送[/magenta] [dim]强制推送本地数据到云端[/dim]", 
                 "📥 [magenta]强制拉取[/magenta] [dim]强制拉取云端数据到本地[/dim]", 
                 "🔎 本地预览 [dim]在浏览器中预览本地项目文件[/dim]",
-                "🖥️ 主机配置 [dim]添加/更新远程主机连接信息[/dim]",
-                "🌐 域名配置 [dim]添加/更新访问域名[/dim]",
-                "🔗 生成链接 [dim]生成项目文件访问链接[/dim]", 
-                "📂 切换项目 [dim]切换项目路径[/dim]", 
+                "🔍 远程预览 [dim]预览远程主机文件树形结构[/dim]",
+                "⚙️ 主机配置 [dim]添加/更新远程主机连接信息(server.json)[/dim]",
+                "🌐 域名配置 [dim]添加/更新访问域名(CNAME)[/dim]",
+                "🔗 生成链接 [dim]生成项目文件访问链接(link.md)[/dim]", 
+                "📂 切换项目 [dim]切换当前项目路径[/dim]", 
                 "🚪 退出脚本"
             ]
             
@@ -142,7 +143,7 @@ def main():
             from rich.panel import Panel
             console.print(Panel(menu_content.strip(), title=f"[bold cyan]🚀 {menu_title}[/bold cyan]", border_style="cyan", expand=False))
             
-            choice = ask_input("请选择操作 (0-8)")
+            choice = ask_input("请选择操作 (0-9)")
             
             if choice == "1":
                 # 智能同步
@@ -196,20 +197,26 @@ def main():
                     preview_manager.stop()
                 else:
                     input("\n按回车键继续...")
-                
+            
             elif choice == "5":
+                # 远程预览
+                from src.sync import preview_remote_structure
+                preview_remote_structure(project_path)
+                input("\n按回车键继续...")
+                
+            elif choice == "6":
                 # 主机配置
                 from src.sync import manage_host_config
                 manage_host_config(project_path)
                 input("\n按回车键继续...")
 
-            elif choice == "6":
+            elif choice == "7":
                 # 域名配置
                 from src.site_info import manage_domain_config
                 manage_domain_config(project_path)
                 input("\n按回车键继续...")
 
-            elif choice == "7":
+            elif choice == "8":
                 # 生成链接
                 try:
                     generate_links_workflow(project_path)
@@ -217,7 +224,7 @@ def main():
                     print_error(f"生成链接失败: {e}")
                 input("\n按回车键继续...")
 
-            elif choice == "8":
+            elif choice == "9":
                 # 切换项目
                 project_path = select_project_workflow()
                 
