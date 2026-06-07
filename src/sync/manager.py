@@ -53,7 +53,7 @@ def manage_host_config(project_path: Path):
     user = ask_input(f"账户 [当前: [magenta]{def_user}[/magenta]]") or def_user
     password = ask_input(f"密码 [当前: [magenta]{'******' if def_pass else '未设置'}[/magenta]]") or def_pass
     
-    print_info("提示：翼龙面板 (Pterodactyl) 用户请将远程路径设为 / 或留空")
+    print_info(r"提示：翼龙面板(Pterodactyl)主机用户请将远程路径设为 / 或留空")
     remote_path = ask_input(f"远程路径 [当前: [magenta]{def_path}[/magenta]]\n⏳ 请输入") or def_path
     
     config_data = {
