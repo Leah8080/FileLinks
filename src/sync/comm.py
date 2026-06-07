@@ -4,7 +4,7 @@ import stat
 import concurrent.futures
 import shutil
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TransferSpeedColumn
-from src.ui import print_step, print_error, print_warning, console
+from src.ui import print_step, print_info, print_error, print_warning, console
 from src.sync.scanner import SYNC_STATE_FILENAME, normalize_path
 from src.config_loader import load_config
 
@@ -277,19 +277,40 @@ def get_real_remote_structure(protocol, config):
             ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
             sftp = ssh.open_sftp()
             remote_path = config.get("remote_path")
-            # 如果配置的是 / 且不是明确要求的，尝试使用 sftp.normalize(".")
-            if not remote_path or remote_path == "/":
-                try:
-                    home = sftp.normalize(".")
-                    base = normalize_path(home)
-                except:
-                    base = "/"
-            else:
-                base = normalize_path(remote_path)
             
-            print_info(f"正在读取 SFTP 远程结构, 根目录: {base}")
-            struct = get_remote_structure_sftp(sftp, base, base)
-            sftp.close(); ssh.close()
+            # 确定基础路径
+            try:
+                # 尝试获取当前目录的标准化路径（在翼龙面板通常是 /）
+                try:
+                    home = normalize_path(sftp.normalize("."))
+                except:
+                    home = "/"
+
+                if not remote_path or remote_path == "/":
+                    base = home
+                else:
+                    base = normalize_path(remote_path)
+                
+                # 验证路径是否存在
+                try:
+                    sftp.stat(base)
+                except:
+                    # 如果指定的路径失败，且看起来像是绝对路径，尝试回退到 /
+                    if base != "/" and base != home:
+                        print_warning(f"无法访问路径 {base}，检测到可能是翼龙面板等受限环境。")
+                        print_info("提示：请在‘主机配置’中将远程路径设为 / 或留空。")
+                        print_step("尝试以根目录 '/' 重新读取...")
+                        base = "/"
+                        try:
+                            sftp.stat(base)
+                        except:
+                            print_error("仍无法访问远程根目录。")
+                            return {}
+                
+                print_info(f"正在读取 SFTP 远程结构, 根目录: {base}")
+                struct = get_remote_structure_sftp(sftp, base, base)
+            finally:
+                sftp.close(); ssh.close()
             return struct
     except Exception as e:
         print_error(f"连接或读取远程结构失败: {e}")
