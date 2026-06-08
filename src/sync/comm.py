@@ -2,11 +2,11 @@ import ftplib
 import json
 import stat
 import concurrent.futures
-import shutil
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TransferSpeedColumn
 from src.ui import print_step, print_info, print_error, print_warning, console
 from src.sync.scanner import SYNC_STATE_FILENAME, normalize_path
 from src.config_loader import load_config
+from src.filter import is_ignored_path
 
 def fetch_remote_state(protocol, config):
     """从远程下载 .sync_state 并解析"""
@@ -75,27 +75,41 @@ def push_remote_state(protocol, config, state):
     except Exception as e:
         print_warning(f"无法同步状态到云端: {e}")
 
-def wipe_remote(protocol, config):
+def wipe_remote(protocol, config, spec=None):
     """完全清空远程目录"""
-    def ftp_remove_dir(ftp, path):
+    def ftp_remove_dir(ftp, path, base):
         for name, facts in ftp.mlsd(path):
             if name in (".", ".."): continue
             full_path = f"{path}/{name}"
-            if facts['type'] == 'dir':
-                ftp_remove_dir(ftp, full_path)
+            rel_path = normalize_path(full_path)[len(base):].lstrip("/")
+            is_dir = facts['type'] == 'dir'
+            if spec and is_ignored_path(rel_path, spec, is_dir):
+                continue
+            if is_dir:
+                ftp_remove_dir(ftp, full_path, base)
             else:
                 ftp.delete(full_path)
-        ftp.rmd(path)
+        try:
+            ftp.rmd(path)
+        except:
+            pass
 
-    def sftp_remove_dir(sftp, path):
+    def sftp_remove_dir(sftp, path, base):
         for item in sftp.listdir_attr(path):
             if item.filename in (".", ".."): continue
             full_path = f"{path}/{item.filename}"
-            if stat.S_ISDIR(item.st_mode):
-                sftp_remove_dir(sftp, full_path)
+            rel_path = normalize_path(full_path)[len(base):].lstrip("/")
+            is_dir = stat.S_ISDIR(item.st_mode)
+            if spec and is_ignored_path(rel_path, spec, is_dir):
+                continue
+            if is_dir:
+                sftp_remove_dir(sftp, full_path, base)
             else:
                 sftp.remove(full_path)
-        sftp.rmdir(path)
+        try:
+            sftp.rmdir(path)
+        except:
+            pass
 
     try:
         if protocol == "ftp":
@@ -108,8 +122,12 @@ def wipe_remote(protocol, config):
                 for name, facts in ftp.mlsd(base):
                     if name in (".", ".."): continue
                     full_path = f"{base}/{name}"
-                    if facts['type'] == 'dir':
-                        ftp_remove_dir(ftp, full_path)
+                    rel_path = normalize_path(full_path)[len(base):].lstrip("/")
+                    is_dir = facts['type'] == 'dir'
+                    if spec and is_ignored_path(rel_path, spec, is_dir):
+                        continue
+                    if is_dir:
+                        ftp_remove_dir(ftp, full_path, base)
                     else:
                         ftp.delete(full_path)
         else:
@@ -123,8 +141,12 @@ def wipe_remote(protocol, config):
             for item in sftp.listdir_attr(base):
                 if item.filename in (".", ".."): continue
                 full_path = f"{base}/{item.filename}"
-                if stat.S_ISDIR(item.st_mode):
-                    sftp_remove_dir(sftp, full_path)
+                rel_path = normalize_path(full_path)[len(base):].lstrip("/")
+                is_dir = stat.S_ISDIR(item.st_mode)
+                if spec and is_ignored_path(rel_path, spec, is_dir):
+                    continue
+                if is_dir:
+                    sftp_remove_dir(sftp, full_path, base)
                 else:
                     sftp.remove(full_path)
             sftp.close(); ssh.close()
@@ -133,9 +155,25 @@ def wipe_remote(protocol, config):
         print_error(f"清空远程目录失败: {e}")
         return False
 
-def run_sync_action(project_root, config, protocol, plan, source_struct, is_download=False):
+def run_sync_action(project_root, config, protocol, plan, source_struct, is_download=False, spec=None):
     """并发执行上传/下载逻辑"""
     failed_files = []
+
+    def remove_local_item(item, rel_path):
+        is_dir = item.is_dir()
+        if spec and is_ignored_path(rel_path, spec, is_dir):
+            return
+        if item.is_file():
+            item.unlink()
+            return
+        if item.is_dir():
+            for child in item.iterdir():
+                child_rel = child.relative_to(project_root).as_posix().strip("/")
+                remove_local_item(child, child_rel)
+            try:
+                item.rmdir()
+            except OSError:
+                pass
     
     def process_file(path):
         try:
@@ -224,12 +262,14 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                         try:
                             if is_download:
                                 item = project_root / path
-                                if item.is_file(): item.unlink()
-                                elif item.is_dir(): shutil.rmtree(item)
+                                remove_local_item(item, path)
                             else:
                                 item = normalize_path(f"{base}/{path}")
-                                try: ftp.delete(item)
-                                except: ftp.rmd(item)
+                                try:
+                                    ftp.delete(item)
+                                except:
+                                    try: ftp.rmd(item)
+                                    except: pass
                         except Exception as e: failed_files.append((path, str(e)))
             else:
                 import paramiko
@@ -242,12 +282,14 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
                     try:
                         if is_download:
                             item = project_root / path
-                            if item.is_file(): item.unlink()
-                            elif item.is_dir(): shutil.rmtree(item)
+                            remove_local_item(item, path)
                         else:
                             item = normalize_path(f"{base}/{path}")
-                            try: sftp.remove(item)
-                            except: sftp.rmdir(item)
+                            try:
+                                sftp.remove(item)
+                            except:
+                                try: sftp.rmdir(item)
+                                except: pass
                     except Exception as e: failed_files.append((path, str(e)))
                 sftp.close(); ssh.close()
         except Exception as e:
@@ -258,7 +300,7 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
         return False
     return True
 
-def get_real_remote_structure(protocol, config):
+def get_real_remote_structure(protocol, config, spec=None, ignored_paths=None):
     try:
         if protocol == "ftp":
             with ftplib.FTP() as ftp:
@@ -269,7 +311,7 @@ def get_real_remote_structure(protocol, config):
                 pwd = ftp.pwd()
                 base = normalize_path(remote_path if remote_path and remote_path != "/" else pwd)
                 print_info(f"正在读取 FTP 远程结构, 根目录: {base}")
-                return get_remote_structure_ftp(ftp, base, base)
+                return get_remote_structure_ftp(ftp, base, base, spec, ignored_paths)
         else:
             import paramiko
             ssh = paramiko.SSHClient()
@@ -308,7 +350,7 @@ def get_real_remote_structure(protocol, config):
                             return {}
                 
                 print_info(f"正在读取 SFTP 远程结构, 根目录: {base}")
-                struct = get_remote_structure_sftp(sftp, base, base)
+                struct = get_remote_structure_sftp(sftp, base, base, spec, ignored_paths)
             finally:
                 sftp.close(); ssh.close()
             return struct
@@ -316,36 +358,46 @@ def get_real_remote_structure(protocol, config):
         print_error(f"连接或读取远程结构失败: {e}")
         return {}
 
-def get_remote_structure_ftp(ftp, current_remote, base_remote):
+def get_remote_structure_ftp(ftp, current_remote, base_remote, spec=None, ignored_paths=None):
     structure = {}
     try:
         for name, facts in ftp.mlsd(current_remote):
-            if name in (".", "..", SYNC_STATE_FILENAME): continue
+            if name in (".", ".."): continue
             rel_path = normalize_path(f"{current_remote}/{name}")[len(base_remote):].lstrip("/")
-            if facts['type'] == 'dir':
+            is_dir = facts['type'] == 'dir'
+            if name == SYNC_STATE_FILENAME or (spec and is_ignored_path(rel_path, spec, is_dir)):
+                if ignored_paths is not None:
+                    ignored_paths[rel_path] = {"type": "dir" if is_dir else "file", "size": 0 if is_dir else int(facts.get('size', 0))}
+                continue
+            if is_dir:
                 structure[rel_path] = {"type": "dir", "size": 0}
-                structure.update(get_remote_structure_ftp(ftp, f"{current_remote}/{name}", base_remote))
+                structure.update(get_remote_structure_ftp(ftp, f"{current_remote}/{name}", base_remote, spec, ignored_paths))
             else:
                 structure[rel_path] = {"type": "file", "size": int(facts.get('size', 0))}
     except Exception as e:
         print_warning(f"无法读取远程目录 {current_remote}: {e}")
     return structure
 
-def get_remote_structure_sftp(sftp, current_remote, base_remote):
+def get_remote_structure_sftp(sftp, current_remote, base_remote, spec=None, ignored_paths=None):
     structure = {}
     try:
         # 尝试列出目录内容
         items = sftp.listdir_attr(current_remote)
         for item in items:
-            if item.filename in (".", "..", SYNC_STATE_FILENAME): continue
+            if item.filename in (".", ".."): continue
             
             # 构造路径时避免双斜杠
             full_path = current_remote.rstrip("/") + "/" + item.filename
             rel_path = normalize_path(full_path)[len(base_remote):].lstrip("/")
+            is_dir = stat.S_ISDIR(item.st_mode)
+            if item.filename == SYNC_STATE_FILENAME or (spec and is_ignored_path(rel_path, spec, is_dir)):
+                if ignored_paths is not None:
+                    ignored_paths[rel_path] = {"type": "dir" if is_dir else "file", "size": 0 if is_dir else item.st_size}
+                continue
             
-            if stat.S_ISDIR(item.st_mode):
+            if is_dir:
                 structure[rel_path] = {"type": "dir", "size": 0}
-                structure.update(get_remote_structure_sftp(sftp, full_path, base_remote))
+                structure.update(get_remote_structure_sftp(sftp, full_path, base_remote, spec, ignored_paths))
             else:
                 structure[rel_path] = {"type": "file", "size": item.st_size}
     except Exception as e:

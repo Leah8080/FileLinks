@@ -38,17 +38,22 @@ def save_sync_state(project_path: Path, state: dict):
     except Exception as e:
         print_warning(f"无法保存同步状态缓存: {e}")
 
-def get_local_structure(path: Path, project_root: Path, spec):
+def get_local_structure(path: Path, project_root: Path, spec, ignored_paths=None):
     """递归获取本地文件结构"""
     structure = {}
     for item in path.iterdir():
+        rel_path = item.relative_to(project_root).as_posix().strip("/")
         if is_ignored(item, project_root, spec, item.is_dir()):
+            if ignored_paths is not None:
+                ignored_paths[rel_path] = {
+                    "type": "dir" if item.is_dir() else "file",
+                    "size": 0 if item.is_dir() else item.stat().st_size
+                }
             continue
         
-        rel_path = item.relative_to(project_root).as_posix().strip("/")
         if item.is_dir():
             structure[rel_path] = {"type": "dir", "size": 0}
-            structure.update(get_local_structure(item, project_root, spec))
+            structure.update(get_local_structure(item, project_root, spec, ignored_paths))
         else:
             structure[rel_path] = {
                 "type": "file",

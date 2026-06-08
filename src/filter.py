@@ -73,9 +73,12 @@ def get_ignore_spec(project_path: Path):
 def is_ignored(path: Path, project_path: Path, spec: pathspec.PathSpec, is_dir: bool = False) -> bool:
     try:
         relative_path = path.relative_to(project_path)
-        path_str = str(relative_path)
-        if is_dir and not path_str.endswith("/"):
-            path_str += "/"
-        return spec.match_file(path_str)
+        return is_ignored_path(relative_path.as_posix(), spec, is_dir)
     except ValueError:
         return False
+
+def is_ignored_path(path_str: str, spec: pathspec.PathSpec, is_dir: bool = False) -> bool:
+    path_str = path_str.replace("\\", "/").strip("/")
+    if is_dir and not path_str.endswith("/"):
+        path_str += "/"
+    return spec.match_file(path_str)
