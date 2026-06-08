@@ -1,67 +1,21 @@
-import json
 import time
 from pathlib import Path
-from src.ui import print_info, print_success, print_error, print_warning, print_step, ask_confirm, ask_input, console
-from src.sync.scanner import get_local_structure, load_sync_state, save_sync_state, SYNC_LOG_FILENAME, normalize_path
+from src.ui import print_info, print_success, print_error, print_warning, ask_confirm, ask_input, console
+from src.sync.scanner import get_local_structure
 from src.sync.engine import generate_sync_plan
-from src.sync.comm import fetch_remote_state, push_remote_state, wipe_remote, run_sync_action, get_real_remote_structure
+from src.sync.comm import fetch_remote_state, wipe_remote, run_sync_action, get_real_remote_structure
 from src.sync.view import display_sync_tree, display_remote_tree
-from src.filter import get_ignore_match_source, get_ignore_spec, is_ignored_path
-from src.config_loader import load_config
-
-def _filter_structure(struct, spec):
-    """移除状态缓存中后来被忽略规则覆盖的路径，并返回被过滤项。"""
-    if not struct:
-        return struct, {}
-    filtered_struct = {}
-    ignored_paths = {}
-    for path, info in struct.items():
-        is_dir = info.get("type") == "dir"
-        if is_ignored_path(path, spec, is_dir):
-            ignored_info = dict(info)
-            ignored_info["ignored_by"] = ignored_info.get("ignored_by") or _get_ignore_source(path, spec, is_dir)
-            ignored_info["origin"] = ignored_info.get("origin") or "state"
-            ignored_paths[path] = ignored_info
-        else:
-            filtered_struct[path] = info
-    return filtered_struct, ignored_paths
-
-def _count_files(struct):
-    return sum(1 for info in struct.values() if info.get("type") == "file")
-
-def _get_ignore_source(path, spec, is_dir=False):
-    return get_ignore_match_source(path, spec, is_dir)
-
-def _load_filtered_local_state(project_path, spec):
-    state = load_sync_state(project_path)
-    clean_state, ignored = _filter_structure(state, spec)
-    if ignored:
-        save_sync_state(project_path, clean_state)
-        print_info(f"已清理本地同步状态中的 {len(ignored)} 个忽略项。")
-    return clean_state, ignored
-
-def _save_clean_state(project_path, state, spec):
-    clean_state, _ = _filter_structure(state, spec)
-    save_sync_state(project_path, clean_state)
-    return clean_state
-
-def _push_clean_remote_state(protocol, cfg, state, spec):
-    clean_state, _ = _filter_structure(state, spec)
-    push_remote_state(protocol, cfg, clean_state)
-    return clean_state
-
-def _merge_ignored(*groups):
-    merged = {}
-    for group in groups:
-        for path, info in group.items():
-            existing = merged.get(path, {})
-            origins = set(str(existing.get("origin", "")).split("+")) if existing.get("origin") else set()
-            if info.get("origin"):
-                origins.add(info["origin"])
-            merged[path] = {**existing, **info}
-            if origins:
-                merged[path]["origin"] = "+".join(sorted(origins))
-    return merged
+from src.filter import get_ignore_spec
+from src.sync.host import get_server_config, manage_host_config
+from src.sync.logging import log_action
+from src.sync.remote import resolve_remote_target as _resolve_remote_target
+from src.sync.remote import scan_remote_structure as _scan_remote_structure
+from src.sync.state import count_files as _count_files
+from src.sync.state import filter_structure as _filter_structure
+from src.sync.state import load_filtered_local_state as _load_filtered_local_state
+from src.sync.state import merge_ignored as _merge_ignored
+from src.sync.state import push_clean_remote_state as _push_clean_remote_state
+from src.sync.state import save_clean_state as _save_clean_state
 
 def _confirm_sync_plan(prompt):
     choice = ask_input(f"{prompt} ([bold green]Y[/bold green]执行 / [bold yellow]P[/bold yellow]仅预览 / [bold red]N[/bold red]取消)").upper()
@@ -72,123 +26,6 @@ def _confirm_sync_plan(prompt):
         return "preview"
     return "cancel"
 
-def _scan_remote_structure(protocol, cfg, spec):
-    remote_ignored = {}
-    remote_struct = get_real_remote_structure(protocol, cfg, spec, remote_ignored)
-    return remote_struct, remote_ignored
-
-def _resolve_remote_target(protocol, cfg, local_state, remote_state, spec, scan_meta=None):
-    if remote_state is None:
-        with console.status("[cyan]扫描远程结构..."):
-            if scan_meta is not None:
-                scan_meta["remote_scan"] = True
-            return _scan_remote_structure(protocol, cfg, spec)
-    if local_state and remote_state != local_state:
-        if load_config().get("remote_scan_on_state_mismatch", True):
-            print_warning("⚠️ 远程状态与本地记录不一致，正在扫描真实远程结构重新校验。")
-            with console.status("[cyan]扫描远程结构..."):
-                if scan_meta is not None:
-                    scan_meta["remote_scan"] = True
-                return _scan_remote_structure(protocol, cfg, spec)
-        print_warning("⚠️ 远程状态与本地记录不一致；已按配置跳过真实远程扫描。")
-    return remote_state, {}
-
-def get_server_config(project_path):
-    server_json = project_path / "server.json"
-    if not server_json.exists():
-        return None
-    try:
-        with open(server_json, "r", encoding="utf-8") as f:
-            config_all = json.load(f)
-        protocol = "ftp" if "ftp" in config_all else "sftp" if "sftp" in config_all else None
-        if not protocol: return None
-        return protocol, config_all[protocol]
-    except Exception:
-        return None
-
-def manage_host_config(project_path: Path):
-    """交互式管理主机配置"""
-    print_step("配置远程主机信息")
-    current = get_server_config(project_path)
-    
-    # 默认值设置
-    def_proto = "sftp"
-    def_host, def_port, def_user, def_pass, def_path = "", "", "", "", "/"
-    
-    if current:
-        def_proto, cfg = current
-        def_host = cfg.get("host", "")
-        def_port = str(cfg.get("port", ""))
-        def_user = cfg.get("user", "")
-        def_pass = cfg.get("password", "")
-        def_path = cfg.get("remote_path", "/")
-
-    print_info("提示：直接回车将保留默认值/当前值")
-    
-    proto = ask_input(f"传输协议 (ftp/sftp) [当前: [magenta]{def_proto}[/magenta]]") or def_proto
-    proto = proto.lower()
-    if proto not in ["ftp", "sftp"]:
-        print_error("无效的协议，仅支持 ftp 或 sftp")
-        return False
-    
-    if not def_port:
-        def_port = "21" if proto == "ftp" else "22"
-        
-    host = ask_input(f"主机地址 [当前: [magenta]{def_host}[/magenta]]") or def_host
-    port = ask_input(f"端口号 [当前: [magenta]{def_port}[/magenta]]") or def_port
-    user = ask_input(f"账户 [当前: [magenta]{def_user}[/magenta]]") or def_user
-    password = ask_input(f"密码 [当前: [magenta]{'******' if def_pass else '未设置'}[/magenta]]") or def_pass
-    
-    print_info(r"提示：翼龙面板(Pterodactyl)主机用户请将远程路径设为 / 或留空")
-    remote_path = ask_input(f"远程路径 [当前: [magenta]{def_path}[/magenta]]\n⏳ 请输入") or def_path
-    
-    config_data = {
-        proto: {
-            "host": host,
-            "port": int(port) if port.isdigit() else (21 if proto == "ftp" else 22),
-            "user": user,
-            "password": password,
-            "remote_path": normalize_path(remote_path)
-        }
-    }
-    
-    try:
-        with open(project_path / "server.json", "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
-        print_success("主机配置已保存到 server.json")
-        return True
-    except Exception as e:
-        print_error(f"保存配置失败: {e}")
-        return False
-
-def log_action(
-    project_path: Path,
-    action_type: str,
-    stats: dict,
-    direction: str = "-",
-    force: bool = False,
-    filtered_count: int = 0,
-    failed_count: int = 0,
-    elapsed: float | None = None,
-    remote_scan: bool = False,
-    status: str = "success"
-):
-    """记录同步操作到 .sync_log"""
-    log_file = project_path / SYNC_LOG_FILENAME
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    elapsed_text = f"{elapsed:.2f}s" if elapsed is not None else "-"
-    log_entry = (
-        f"[{timestamp}] {action_type} | status={status} | direction={direction} | force={force} | "
-        f"+{stats.get('added', 0)} added | ~{stats.get('updated', 0)} updated | "
-        f"-{stats.get('deleted', 0)} deleted | !{stats.get('conflict', 0)} conflict | "
-        f"filtered={filtered_count} | failed={failed_count} | remote_scan={remote_scan} | "
-        f"elapsed={elapsed_text}\n"
-    )
-    try:
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(log_entry)
-    except Exception:
-        pass
 
 def smart_sync(project_path: Path, spec):
     """智能同步：自动判断增量更新"""

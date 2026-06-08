@@ -9,6 +9,7 @@ from src.filter import get_ignore_match_source, get_ignore_spec
 from src.config_loader import validate_config
 from src.sync import comm
 from src.sync import manager
+from src.sync import remote_scan
 from src.sync import view
 from src.sync.scanner import SYNC_STATE_FILENAME
 
@@ -46,7 +47,7 @@ class SyncLogicTests(unittest.TestCase):
                 ignored_paths["server.json"] = {"type": "file", "size": 1, "origin": "remote"}
                 return scanned
 
-            with patch("src.sync.manager.get_real_remote_structure", side_effect=fake_scan) as scan:
+            with patch("src.sync.remote.get_real_remote_structure", side_effect=fake_scan) as scan:
                 scan_meta = {"remote_scan": False}
                 target, remote_ignored = manager._resolve_remote_target("ftp", {}, local_state, remote_state, spec, scan_meta)
 
@@ -63,8 +64,8 @@ class SyncLogicTests(unittest.TestCase):
             local_state = {"index.html": {"type": "file", "size": 10, "md5": "a"}}
             remote_state = {"index.html": {"type": "file", "size": 11, "md5": "b"}}
 
-            with patch("src.sync.manager.load_config", return_value={"remote_scan_on_state_mismatch": False}):
-                with patch("src.sync.manager.get_real_remote_structure") as scan:
+            with patch("src.sync.remote.load_config", return_value={"remote_scan_on_state_mismatch": False}):
+                with patch("src.sync.remote.get_real_remote_structure") as scan:
                     target, remote_ignored = manager._resolve_remote_target("ftp", {}, local_state, remote_state, spec)
 
         scan.assert_not_called()
@@ -134,8 +135,8 @@ class SyncLogicTests(unittest.TestCase):
     def test_remote_scan_stats_output(self):
         captured = []
 
-        with patch("src.sync.comm.print_info", side_effect=captured.append):
-            comm._print_remote_scan_stats({"dirs": 2, "files": 3, "filtered": 1}, 0)
+        with patch("src.sync.remote_scan.print_info", side_effect=captured.append):
+            remote_scan._print_remote_scan_stats({"dirs": 2, "files": 3, "filtered": 1}, 0)
 
         self.assertTrue(any("目录 2" in item and "文件 3" in item and "已过滤 1" in item for item in captured))
 
