@@ -297,6 +297,10 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
 
     if failed_files:
         print_warning(f"\n⚠️ 操作完成，但有 {len(failed_files)} 个项处理失败。")
+        for path, error in failed_files[:5]:
+            print_warning(f"失败项: {path} -> {error}")
+        if len(failed_files) > 5:
+            print_warning(f"其余 {len(failed_files) - 5} 个失败项已省略。")
         return False
     return True
 

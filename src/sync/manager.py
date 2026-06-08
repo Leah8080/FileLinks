@@ -32,7 +32,12 @@ def _get_ignore_source(path, spec, is_dir=False):
     return get_ignore_match_source(path, spec, is_dir)
 
 def _load_filtered_local_state(project_path, spec):
-    return _filter_structure(load_sync_state(project_path), spec)
+    state = load_sync_state(project_path)
+    clean_state, ignored = _filter_structure(state, spec)
+    if ignored:
+        save_sync_state(project_path, clean_state)
+        print_info(f"已清理本地同步状态中的 {len(ignored)} 个忽略项。")
+    return clean_state, ignored
 
 def _save_clean_state(project_path, state, spec):
     clean_state, _ = _filter_structure(state, spec)
@@ -65,6 +70,21 @@ def _confirm_sync_plan(prompt):
         print_info("预览结束，未执行任何操作。")
         return "preview"
     return "cancel"
+
+def _scan_remote_structure(protocol, cfg, spec):
+    remote_ignored = {}
+    remote_struct = get_real_remote_structure(protocol, cfg, spec, remote_ignored)
+    return remote_struct, remote_ignored
+
+def _resolve_remote_target(protocol, cfg, local_state, remote_state, spec):
+    if remote_state is None:
+        with console.status("[cyan]扫描远程结构..."):
+            return _scan_remote_structure(protocol, cfg, spec)
+    if local_state and remote_state != local_state:
+        print_warning("⚠️ 远程状态与本地记录不一致，正在扫描真实远程结构重新校验。")
+        with console.status("[cyan]扫描远程结构..."):
+            return _scan_remote_structure(protocol, cfg, spec)
+    return remote_state, {}
 
 def get_server_config(project_path):
     server_json = project_path / "server.json"
@@ -168,9 +188,8 @@ def smart_sync(project_path: Path, spec):
 
     print_info("正在分析增量更新...")
     
-    if not remote_state:
-        with console.status("[cyan]正在扫描远程结构..."):
-            remote_state = get_real_remote_structure(protocol, cfg, spec)
+    if not remote_state or (local_state and remote_state != local_state):
+        remote_state, _ = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec)
 
     return sync_to_remote(project_path, spec, force=False)
 
@@ -207,14 +226,12 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_warning("本地无同步记录。请使用“强制上传”或先执行“强制下载”初始化状态。")
         return False
 
-    target_for_plan = remote_state if remote_state else local_state
+    target_for_plan, real_remote_ignored = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec)
+    remote_ignored = _merge_ignored(remote_ignored, real_remote_ignored)
+    target_for_plan = target_for_plan if target_for_plan is not None else local_state
     plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, base_struct=local_state)
     
     display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored))
-
-    if remote_state and remote_state != local_state:
-        print_warning("⚠️ 远程状态已更新，本地记录已过时。")
-        if not ask_confirm("仍要覆盖远程改动吗？"): return False
 
     if stats.get("conflict"):
         print_warning(f"检测到 {stats['conflict']} 处冲突！")
@@ -243,11 +260,8 @@ def sync_from_remote(project_path: Path, spec, force=False):
     local_state, state_ignored = _load_filtered_local_state(project_path, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, remote_ignored = _filter_structure(remote_state, spec)
-    
-    if not remote_state:
-        with console.status("[cyan]扫描远程结构..."):
-            remote_ignored = {}
-            remote_state = get_real_remote_structure(protocol, cfg, spec, remote_ignored)
+    remote_state, real_remote_ignored = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec)
+    remote_ignored = _merge_ignored(remote_ignored, real_remote_ignored)
 
     if force:
         print_warning("⚠️ [bold red]强制下载模式[/bold red]：将以云端文件为准，覆盖本地内容。")
