@@ -2,7 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 from src.ui import print_warning
-from src.filter import is_ignored
+from src.filter import get_ignore_match_source, is_ignored
 
 SYNC_STATE_FILENAME = ".sync_state"
 SYNC_LOG_FILENAME = ".sync_log"
@@ -47,7 +47,9 @@ def get_local_structure(path: Path, project_root: Path, spec, ignored_paths=None
             if ignored_paths is not None:
                 ignored_paths[rel_path] = {
                     "type": "dir" if item.is_dir() else "file",
-                    "size": 0 if item.is_dir() else item.stat().st_size
+                    "size": 0 if item.is_dir() else item.stat().st_size,
+                    "ignored_by": get_ignore_match_source(rel_path, spec, item.is_dir()),
+                    "origin": "local"
                 }
             continue
         

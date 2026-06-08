@@ -6,7 +6,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from src.ui import print_step, print_info, print_error, print_warning, console
 from src.sync.scanner import SYNC_STATE_FILENAME, normalize_path
 from src.config_loader import load_config
-from src.filter import is_ignored_path
+from src.filter import get_ignore_match_source, is_ignored_path
 
 def fetch_remote_state(protocol, config):
     """从远程下载 .sync_state 并解析"""
@@ -367,7 +367,12 @@ def get_remote_structure_ftp(ftp, current_remote, base_remote, spec=None, ignore
             is_dir = facts['type'] == 'dir'
             if name == SYNC_STATE_FILENAME or (spec and is_ignored_path(rel_path, spec, is_dir)):
                 if ignored_paths is not None:
-                    ignored_paths[rel_path] = {"type": "dir" if is_dir else "file", "size": 0 if is_dir else int(facts.get('size', 0))}
+                    ignored_paths[rel_path] = {
+                        "type": "dir" if is_dir else "file",
+                        "size": 0 if is_dir else int(facts.get('size', 0)),
+                        "ignored_by": get_ignore_match_source(rel_path, spec, is_dir),
+                        "origin": "remote"
+                    }
                 continue
             if is_dir:
                 structure[rel_path] = {"type": "dir", "size": 0}
@@ -392,7 +397,12 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote, spec=None, igno
             is_dir = stat.S_ISDIR(item.st_mode)
             if item.filename == SYNC_STATE_FILENAME or (spec and is_ignored_path(rel_path, spec, is_dir)):
                 if ignored_paths is not None:
-                    ignored_paths[rel_path] = {"type": "dir" if is_dir else "file", "size": 0 if is_dir else item.st_size}
+                    ignored_paths[rel_path] = {
+                        "type": "dir" if is_dir else "file",
+                        "size": 0 if is_dir else item.st_size,
+                        "ignored_by": get_ignore_match_source(rel_path, spec, is_dir),
+                        "origin": "remote"
+                    }
                 continue
             
             if is_dir:

@@ -6,7 +6,7 @@ from src.sync.scanner import get_local_structure, load_sync_state, save_sync_sta
 from src.sync.engine import generate_sync_plan
 from src.sync.comm import fetch_remote_state, push_remote_state, wipe_remote, run_sync_action, get_real_remote_structure
 from src.sync.view import display_sync_tree, display_remote_tree
-from src.filter import get_ignore_spec, is_ignored_path
+from src.filter import get_ignore_match_source, get_ignore_spec, is_ignored_path
 
 def _filter_structure(struct, spec):
     """移除状态缓存中后来被忽略规则覆盖的路径，并返回被过滤项。"""
@@ -17,13 +17,54 @@ def _filter_structure(struct, spec):
     for path, info in struct.items():
         is_dir = info.get("type") == "dir"
         if is_ignored_path(path, spec, is_dir):
-            ignored_paths[path] = info
+            ignored_info = dict(info)
+            ignored_info["ignored_by"] = ignored_info.get("ignored_by") or _get_ignore_source(path, spec, is_dir)
+            ignored_info["origin"] = ignored_info.get("origin") or "state"
+            ignored_paths[path] = ignored_info
         else:
             filtered_struct[path] = info
     return filtered_struct, ignored_paths
 
 def _count_files(struct):
     return sum(1 for info in struct.values() if info.get("type") == "file")
+
+def _get_ignore_source(path, spec, is_dir=False):
+    return get_ignore_match_source(path, spec, is_dir)
+
+def _load_filtered_local_state(project_path, spec):
+    return _filter_structure(load_sync_state(project_path), spec)
+
+def _save_clean_state(project_path, state, spec):
+    clean_state, _ = _filter_structure(state, spec)
+    save_sync_state(project_path, clean_state)
+    return clean_state
+
+def _push_clean_remote_state(protocol, cfg, state, spec):
+    clean_state, _ = _filter_structure(state, spec)
+    push_remote_state(protocol, cfg, clean_state)
+    return clean_state
+
+def _merge_ignored(*groups):
+    merged = {}
+    for group in groups:
+        for path, info in group.items():
+            existing = merged.get(path, {})
+            origins = set(str(existing.get("origin", "")).split("+")) if existing.get("origin") else set()
+            if info.get("origin"):
+                origins.add(info["origin"])
+            merged[path] = {**existing, **info}
+            if origins:
+                merged[path]["origin"] = "+".join(sorted(origins))
+    return merged
+
+def _confirm_sync_plan(prompt):
+    choice = ask_input(f"{prompt} ([bold green]Y[/bold green]执行 / [bold yellow]P[/bold yellow]仅预览 / [bold red]N[/bold red]取消)").upper()
+    if choice == "Y":
+        return "run"
+    if choice == "P":
+        print_info("预览结束，未执行任何操作。")
+        return "preview"
+    return "cancel"
 
 def get_server_config(project_path):
     server_json = project_path / "server.json"
@@ -111,8 +152,7 @@ def smart_sync(project_path: Path, spec):
     protocol, cfg = config
 
     local_struct = get_local_structure(project_path, project_path, spec)
-    local_state = load_sync_state(project_path)
-    local_state, _ = _filter_structure(local_state, spec)
+    local_state, _ = _load_filtered_local_state(project_path, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, _ = _filter_structure(remote_state, spec)
 
@@ -141,8 +181,7 @@ def sync_to_remote(project_path: Path, spec, force=False):
 
     local_ignored = {}
     local_struct = get_local_structure(project_path, project_path, spec, local_ignored)
-    local_state = load_sync_state(project_path)
-    local_state, state_ignored = _filter_structure(local_state, spec)
+    local_state, state_ignored = _load_filtered_local_state(project_path, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, remote_ignored = _filter_structure(remote_state, spec)
 
@@ -150,13 +189,15 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_warning("⚠️ [bold red]强制上传模式[/bold red]：将以本地文件为准，覆盖远程内容。")
         path_states = {path: "added" for path in local_struct}
         stats = {"added": _count_files(local_struct), "updated": 0, "deleted": 0, "conflict": 0}
-        display_sync_tree(path_states, local_struct, {}, project_path.name, stats, filtered_paths={**state_ignored, **remote_ignored, **local_ignored})
-        if not ask_confirm("确认清空远程并重新上传吗？"): return False
+        display_sync_tree(path_states, local_struct, {}, project_path.name, stats, filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored))
+        confirm = _confirm_sync_plan("确认清空远程并重新上传吗？被忽略的远程文件会保留")
+        if confirm != "run":
+            return False
         if wipe_remote(protocol, cfg, spec):
             plan = {"upload": sorted(local_struct.keys()), "delete": [], "skip": []}
             if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False, spec=spec):
-                save_sync_state(project_path, local_struct)
-                push_remote_state(protocol, cfg, local_struct)
+                clean_state = _save_clean_state(project_path, local_struct, spec)
+                _push_clean_remote_state(protocol, cfg, clean_state, spec)
                 log_action(project_path, "Force Upload", {"added": len(local_struct)})
                 print_success("首次同步完成！")
                 return True
@@ -169,7 +210,7 @@ def sync_to_remote(project_path: Path, spec, force=False):
     target_for_plan = remote_state if remote_state else local_state
     plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, base_struct=local_state)
     
-    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths={**state_ignored, **remote_ignored, **local_ignored})
+    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored))
 
     if remote_state and remote_state != local_state:
         print_warning("⚠️ 远程状态已更新，本地记录已过时。")
@@ -184,17 +225,14 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_success("本地与远程已同步，无需操作。")
         return True
 
-    confirm = ask_input("确认执行同步计划？([bold green]Y[/bold green]确定 / [bold yellow]P[/bold yellow]仅预览 / [bold red]N[/bold red]取消)").upper()
-    if confirm == 'Y':
+    confirm = _confirm_sync_plan("确认执行同步计划？")
+    if confirm == "run":
         if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False, spec=spec):
-            save_sync_state(project_path, local_struct)
-            push_remote_state(protocol, cfg, local_struct)
+            clean_state = _save_clean_state(project_path, local_struct, spec)
+            _push_clean_remote_state(protocol, cfg, clean_state, spec)
             log_action(project_path, "Incremental Sync", stats)
             print_success("同步成功！")
             return True
-    elif confirm == 'P':
-        print_info("预览结束，未执行任何操作。")
-        return False
     return False
 
 def sync_from_remote(project_path: Path, spec, force=False):
@@ -202,8 +240,7 @@ def sync_from_remote(project_path: Path, spec, force=False):
     if not config: return False
     protocol, cfg = config
 
-    local_state = load_sync_state(project_path)
-    local_state, state_ignored = _filter_structure(local_state, spec)
+    local_state, state_ignored = _load_filtered_local_state(project_path, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, remote_ignored = _filter_structure(remote_state, spec)
     
@@ -225,19 +262,19 @@ def sync_from_remote(project_path: Path, spec, force=False):
         local_struct = get_local_structure(project_path, project_path, spec, local_ignored)
         plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
 
-    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True, filtered_paths={**state_ignored, **local_ignored, **remote_ignored})
+    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True, filtered_paths=_merge_ignored(state_ignored, local_ignored, remote_ignored))
 
     if not (plan["upload"] or plan["delete"]):
         print_success("本地已是最新，无需操作。")
-        save_sync_state(project_path, remote_state)
+        _save_clean_state(project_path, remote_state, spec)
         return True
 
-    confirm_message = "确认同步云端到本地吗？(本地多余文件将被删除)" if force else "确认同步？"
-    if ask_confirm(confirm_message):
+    confirm_message = "确认同步云端到本地吗？本地多余文件将被删除" if force else "确认同步？"
+    if _confirm_sync_plan(confirm_message) == "run":
         if run_sync_action(project_path, cfg, protocol, plan, remote_state, is_download=True, spec=spec):
             new_local = get_local_structure(project_path, project_path, spec)
-            save_sync_state(project_path, new_local)
-            push_remote_state(protocol, cfg, new_local)
+            clean_state = _save_clean_state(project_path, new_local, spec)
+            _push_clean_remote_state(protocol, cfg, clean_state, spec)
             return True
     return False
 

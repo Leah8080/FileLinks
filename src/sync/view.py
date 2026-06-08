@@ -1,6 +1,7 @@
 from pathlib import Path
 from rich.tree import Tree
 from rich.panel import Panel
+from rich.markup import escape
 from src.ui import console
 from src.config_loader import load_config
 
@@ -12,6 +13,29 @@ def _ensure_parent_node(nodes, parent_path):
     _ensure_parent_node(nodes, grandparent)
     nodes[parent_path] = nodes[grandparent].add(f"[dim]📁 {parts[-1]}[/dim]")
 
+def _format_filtered_summary(filtered_paths):
+    counts = {"local": 0, "remote": 0, "state": 0}
+    for info in filtered_paths.values():
+        origins = str(info.get("origin", "")).split("+")
+        for origin in origins:
+            if origin in counts:
+                counts[origin] += 1
+    parts = []
+    if counts["local"]:
+        parts.append(f"本地 {counts['local']}")
+    if counts["remote"]:
+        parts.append(f"远程 {counts['remote']}")
+    if counts["state"]:
+        parts.append(f"状态 {counts['state']}")
+    detail = f" ({' / '.join(parts)})" if parts else ""
+    return f"  [dim]⊘ {len(filtered_paths)} 已过滤{detail}[/dim]"
+
+def _filtered_label(info):
+    source = info.get("ignored_by")
+    if source:
+        return f"[已过滤: {escape(str(source))}]"
+    return "[已过滤]"
+
 def display_sync_tree(path_states, source_struct, target_struct, project_name, stats, is_download=False, filtered_paths=None):
     """显示优化的同步预览树"""
     filtered_paths = filtered_paths or {}
@@ -22,7 +46,7 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
     if stats.get("conflict"):
         summary += f"  [bold magenta]! {stats['conflict']} 冲突[/bold magenta]"
     if filtered_paths:
-        summary += f"  [dim]⊘ {len(filtered_paths)} 已过滤[/dim]"
+        summary += _format_filtered_summary(filtered_paths)
         
     console.print(Panel(summary, title="📊 同步摘要", expand=False))
     
@@ -50,7 +74,7 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
         elif state == "conflict":
             style, label = "bold magenta", "[冲突]"
         elif state == "filtered":
-            style, label = "dim", "[已过滤]"
+            style, label = "dim", _filtered_label(filtered_paths[path])
             
         info = source_struct.get(path) or target_struct.get(path) or filtered_paths.get(path)
         is_dir = info["type"] == "dir"
@@ -99,7 +123,7 @@ def display_remote_tree(remote_struct, project_name, filtered_paths=None):
             style = "green"
         
         size_str = f" [dim]({info['size']} bytes)[/dim]" if not is_dir and not is_filtered else ""
-        label = " [已过滤]" if is_filtered else ""
+        label = f" {_filtered_label(info)}" if is_filtered else ""
         display_text = f"[{style}]{icon} {name}{label}[/{style}]{size_str}"
         
         _ensure_parent_node(nodes, parent)
