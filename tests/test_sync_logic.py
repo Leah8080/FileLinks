@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.filter import get_ignore_match_source, get_ignore_spec
+from src.config_loader import validate_config
+from src.sync import comm
 from src.sync import manager
 from src.sync import view
 from src.sync.scanner import SYNC_STATE_FILENAME
@@ -50,6 +52,27 @@ class SyncLogicTests(unittest.TestCase):
         scan.assert_called_once()
         self.assertEqual(target, scanned)
         self.assertEqual(set(remote_ignored), {"server.json"})
+
+    def test_resolve_remote_target_respects_scan_mismatch_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / ".gitignore").write_text("server.json\n", encoding="utf-8")
+            spec = get_ignore_spec(project)
+            local_state = {"index.html": {"type": "file", "size": 10, "md5": "a"}}
+            remote_state = {"index.html": {"type": "file", "size": 11, "md5": "b"}}
+
+            with patch("src.sync.manager.load_config", return_value={"remote_scan_on_state_mismatch": False}):
+                with patch("src.sync.manager.get_real_remote_structure") as scan:
+                    target, remote_ignored = manager._resolve_remote_target("ftp", {}, local_state, remote_state, spec)
+
+        scan.assert_not_called()
+        self.assertEqual(target, remote_state)
+        self.assertEqual(remote_ignored, {})
+
+    def test_config_validates_remote_scan_toggle(self):
+        self.assertTrue(validate_config({})["remote_scan_on_state_mismatch"])
+        self.assertFalse(validate_config({"remote_scan_on_state_mismatch": False})["remote_scan_on_state_mismatch"])
+        self.assertTrue(validate_config({"remote_scan_on_state_mismatch": "no"})["remote_scan_on_state_mismatch"])
 
     def test_merge_ignored_preserves_multiple_origins(self):
         merged = manager._merge_ignored(
@@ -105,6 +128,14 @@ class SyncLogicTests(unittest.TestCase):
             view.console = original_console
 
         self.assertTrue(any("将重建远程" in item for item in captured))
+
+    def test_remote_scan_stats_output(self):
+        captured = []
+
+        with patch("src.sync.comm.print_info", side_effect=captured.append):
+            comm._print_remote_scan_stats({"dirs": 2, "files": 3, "filtered": 1}, 0)
+
+        self.assertTrue(any("目录 2" in item and "文件 3" in item and "已过滤 1" in item for item in captured))
 
 
 if __name__ == "__main__":

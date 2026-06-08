@@ -7,6 +7,7 @@ from src.sync.engine import generate_sync_plan
 from src.sync.comm import fetch_remote_state, push_remote_state, wipe_remote, run_sync_action, get_real_remote_structure
 from src.sync.view import display_sync_tree, display_remote_tree
 from src.filter import get_ignore_match_source, get_ignore_spec, is_ignored_path
+from src.config_loader import load_config
 
 def _filter_structure(struct, spec):
     """移除状态缓存中后来被忽略规则覆盖的路径，并返回被过滤项。"""
@@ -81,9 +82,11 @@ def _resolve_remote_target(protocol, cfg, local_state, remote_state, spec):
         with console.status("[cyan]扫描远程结构..."):
             return _scan_remote_structure(protocol, cfg, spec)
     if local_state and remote_state != local_state:
-        print_warning("⚠️ 远程状态与本地记录不一致，正在扫描真实远程结构重新校验。")
-        with console.status("[cyan]扫描远程结构..."):
-            return _scan_remote_structure(protocol, cfg, spec)
+        if load_config().get("remote_scan_on_state_mismatch", True):
+            print_warning("⚠️ 远程状态与本地记录不一致，正在扫描真实远程结构重新校验。")
+            with console.status("[cyan]扫描远程结构..."):
+                return _scan_remote_structure(protocol, cfg, spec)
+        print_warning("⚠️ 远程状态与本地记录不一致；已按配置跳过真实远程扫描。")
     return remote_state, {}
 
 def get_server_config(project_path):

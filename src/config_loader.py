@@ -7,6 +7,7 @@ DEFAULT_CONFIG = {
     "max_history": 10,
     "max_workers": 3,
     "preview_port": 8000,
+    "remote_scan_on_state_mismatch": True,
     "ignore": [
         ".gitignore",
         ".surgeignore"
@@ -41,6 +42,10 @@ def validate_config(config: dict) -> dict:
 
     for key in ["max_history", "max_workers", "preview_port"]:
         if key in config and isinstance(config[key], int):
+            validated[key] = config[key]
+
+    for key in ["remote_scan_on_state_mismatch"]:
+        if key in config and isinstance(config[key], bool):
             validated[key] = config[key]
             
     # 验证并合并 ignore 列表

@@ -2,6 +2,7 @@ import ftplib
 import json
 import stat
 import concurrent.futures
+import time
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TransferSpeedColumn
 from src.ui import print_step, print_info, print_error, print_warning, console
 from src.sync.scanner import SYNC_STATE_FILENAME, normalize_path
@@ -305,6 +306,8 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
     return True
 
 def get_real_remote_structure(protocol, config, spec=None, ignored_paths=None):
+    started_at = time.perf_counter()
+    scan_stats = {"dirs": 0, "files": 0, "filtered": 0}
     try:
         if protocol == "ftp":
             with ftplib.FTP() as ftp:
@@ -315,7 +318,9 @@ def get_real_remote_structure(protocol, config, spec=None, ignored_paths=None):
                 pwd = ftp.pwd()
                 base = normalize_path(remote_path if remote_path and remote_path != "/" else pwd)
                 print_info(f"正在读取 FTP 远程结构, 根目录: {base}")
-                return get_remote_structure_ftp(ftp, base, base, spec, ignored_paths)
+                struct = get_remote_structure_ftp(ftp, base, base, spec, ignored_paths, scan_stats)
+                _print_remote_scan_stats(scan_stats, started_at)
+                return struct
         else:
             import paramiko
             ssh = paramiko.SSHClient()
@@ -354,15 +359,23 @@ def get_real_remote_structure(protocol, config, spec=None, ignored_paths=None):
                             return {}
                 
                 print_info(f"正在读取 SFTP 远程结构, 根目录: {base}")
-                struct = get_remote_structure_sftp(sftp, base, base, spec, ignored_paths)
+                struct = get_remote_structure_sftp(sftp, base, base, spec, ignored_paths, scan_stats)
             finally:
                 sftp.close(); ssh.close()
+            _print_remote_scan_stats(scan_stats, started_at)
             return struct
     except Exception as e:
         print_error(f"连接或读取远程结构失败: {e}")
         return {}
 
-def get_remote_structure_ftp(ftp, current_remote, base_remote, spec=None, ignored_paths=None):
+def _print_remote_scan_stats(stats, started_at):
+    elapsed = time.perf_counter() - started_at
+    print_info(
+        f"远程扫描完成：目录 {stats['dirs']}，文件 {stats['files']}，"
+        f"已过滤 {stats['filtered']}，耗时 {elapsed:.2f}s"
+    )
+
+def get_remote_structure_ftp(ftp, current_remote, base_remote, spec=None, ignored_paths=None, scan_stats=None):
     structure = {}
     try:
         for name, facts in ftp.mlsd(current_remote):
@@ -370,6 +383,8 @@ def get_remote_structure_ftp(ftp, current_remote, base_remote, spec=None, ignore
             rel_path = normalize_path(f"{current_remote}/{name}")[len(base_remote):].lstrip("/")
             is_dir = facts['type'] == 'dir'
             if name == SYNC_STATE_FILENAME or (spec and is_ignored_path(rel_path, spec, is_dir)):
+                if scan_stats is not None:
+                    scan_stats["filtered"] += 1
                 if ignored_paths is not None:
                     ignored_paths[rel_path] = {
                         "type": "dir" if is_dir else "file",
@@ -379,15 +394,19 @@ def get_remote_structure_ftp(ftp, current_remote, base_remote, spec=None, ignore
                     }
                 continue
             if is_dir:
+                if scan_stats is not None:
+                    scan_stats["dirs"] += 1
                 structure[rel_path] = {"type": "dir", "size": 0}
-                structure.update(get_remote_structure_ftp(ftp, f"{current_remote}/{name}", base_remote, spec, ignored_paths))
+                structure.update(get_remote_structure_ftp(ftp, f"{current_remote}/{name}", base_remote, spec, ignored_paths, scan_stats))
             else:
+                if scan_stats is not None:
+                    scan_stats["files"] += 1
                 structure[rel_path] = {"type": "file", "size": int(facts.get('size', 0))}
     except Exception as e:
         print_warning(f"无法读取远程目录 {current_remote}: {e}")
     return structure
 
-def get_remote_structure_sftp(sftp, current_remote, base_remote, spec=None, ignored_paths=None):
+def get_remote_structure_sftp(sftp, current_remote, base_remote, spec=None, ignored_paths=None, scan_stats=None):
     structure = {}
     try:
         # 尝试列出目录内容
@@ -400,6 +419,8 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote, spec=None, igno
             rel_path = normalize_path(full_path)[len(base_remote):].lstrip("/")
             is_dir = stat.S_ISDIR(item.st_mode)
             if item.filename == SYNC_STATE_FILENAME or (spec and is_ignored_path(rel_path, spec, is_dir)):
+                if scan_stats is not None:
+                    scan_stats["filtered"] += 1
                 if ignored_paths is not None:
                     ignored_paths[rel_path] = {
                         "type": "dir" if is_dir else "file",
@@ -410,9 +431,13 @@ def get_remote_structure_sftp(sftp, current_remote, base_remote, spec=None, igno
                 continue
             
             if is_dir:
+                if scan_stats is not None:
+                    scan_stats["dirs"] += 1
                 structure[rel_path] = {"type": "dir", "size": 0}
-                structure.update(get_remote_structure_sftp(sftp, full_path, base_remote, spec, ignored_paths))
+                structure.update(get_remote_structure_sftp(sftp, full_path, base_remote, spec, ignored_paths, scan_stats))
             else:
+                if scan_stats is not None:
+                    scan_stats["files"] += 1
                 structure[rel_path] = {"type": "file", "size": item.st_size}
     except Exception as e:
         print_warning(f"无法读取远程目录 {current_remote}: {e}")
