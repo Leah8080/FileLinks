@@ -159,6 +159,7 @@ def wipe_remote(protocol, config, spec=None):
 def run_sync_action(project_root, config, protocol, plan, source_struct, is_download=False, spec=None):
     """并发执行上传/下载逻辑"""
     failed_files = []
+    run_sync_action.last_result = {"failed": 0}
 
     def remove_local_item(item, rel_path):
         is_dir = item.is_dir()
@@ -297,12 +298,14 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
             print_error(f"清理阶段失败: {e}")
 
     if failed_files:
+        run_sync_action.last_result = {"failed": len(failed_files)}
         print_warning(f"\n⚠️ 操作完成，但有 {len(failed_files)} 个项处理失败。")
         for path, error in failed_files[:5]:
             print_warning(f"失败项: {path} -> {error}")
         if len(failed_files) > 5:
             print_warning(f"其余 {len(failed_files) - 5} 个失败项已省略。")
         return False
+    run_sync_action.last_result = {"failed": 0}
     return True
 
 def get_real_remote_structure(protocol, config, spec=None, ignored_paths=None):

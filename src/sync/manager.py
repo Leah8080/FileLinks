@@ -77,14 +77,18 @@ def _scan_remote_structure(protocol, cfg, spec):
     remote_struct = get_real_remote_structure(protocol, cfg, spec, remote_ignored)
     return remote_struct, remote_ignored
 
-def _resolve_remote_target(protocol, cfg, local_state, remote_state, spec):
+def _resolve_remote_target(protocol, cfg, local_state, remote_state, spec, scan_meta=None):
     if remote_state is None:
         with console.status("[cyan]扫描远程结构..."):
+            if scan_meta is not None:
+                scan_meta["remote_scan"] = True
             return _scan_remote_structure(protocol, cfg, spec)
     if local_state and remote_state != local_state:
         if load_config().get("remote_scan_on_state_mismatch", True):
             print_warning("⚠️ 远程状态与本地记录不一致，正在扫描真实远程结构重新校验。")
             with console.status("[cyan]扫描远程结构..."):
+                if scan_meta is not None:
+                    scan_meta["remote_scan"] = True
                 return _scan_remote_structure(protocol, cfg, spec)
         print_warning("⚠️ 远程状态与本地记录不一致；已按配置跳过真实远程扫描。")
     return remote_state, {}
@@ -157,11 +161,29 @@ def manage_host_config(project_path: Path):
         print_error(f"保存配置失败: {e}")
         return False
 
-def log_action(project_path: Path, action_type: str, stats: dict):
+def log_action(
+    project_path: Path,
+    action_type: str,
+    stats: dict,
+    direction: str = "-",
+    force: bool = False,
+    filtered_count: int = 0,
+    failed_count: int = 0,
+    elapsed: float | None = None,
+    remote_scan: bool = False,
+    status: str = "success"
+):
     """记录同步操作到 .sync_log"""
     log_file = project_path / SYNC_LOG_FILENAME
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = f"[{timestamp}] {action_type}: +{stats.get('added', 0)} added, ~{stats.get('updated', 0)} updated, -{stats.get('deleted', 0)} deleted\n"
+    elapsed_text = f"{elapsed:.2f}s" if elapsed is not None else "-"
+    log_entry = (
+        f"[{timestamp}] {action_type} | status={status} | direction={direction} | force={force} | "
+        f"+{stats.get('added', 0)} added | ~{stats.get('updated', 0)} updated | "
+        f"-{stats.get('deleted', 0)} deleted | !{stats.get('conflict', 0)} conflict | "
+        f"filtered={filtered_count} | failed={failed_count} | remote_scan={remote_scan} | "
+        f"elapsed={elapsed_text}\n"
+    )
     try:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(log_entry)
@@ -197,9 +219,11 @@ def smart_sync(project_path: Path, spec):
     return sync_to_remote(project_path, spec, force=False)
 
 def sync_to_remote(project_path: Path, spec, force=False):
+    started_at = time.perf_counter()
     config = get_server_config(project_path)
     if not config: return False
     protocol, cfg = config
+    scan_meta = {"remote_scan": False}
 
     local_ignored = {}
     local_struct = get_local_structure(project_path, project_path, spec, local_ignored)
@@ -211,13 +235,14 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_warning("⚠️ [bold red]强制上传模式[/bold red]：将以本地文件为准，覆盖远程内容。")
         path_states = {path: "added" for path in local_struct}
         stats = {"added": _count_files(local_struct), "updated": 0, "deleted": 0, "conflict": 0}
+        filtered_paths = _merge_ignored(state_ignored, remote_ignored, local_ignored)
         display_sync_tree(
             path_states,
             local_struct,
             {},
             project_path.name,
             stats,
-            filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored),
+            filtered_paths=filtered_paths,
             added_label="将重建远程"
         )
         confirm = _confirm_sync_plan("确认清空远程并重新上传吗？被忽略的远程文件会保留")
@@ -225,10 +250,17 @@ def sync_to_remote(project_path: Path, spec, force=False):
             return False
         if wipe_remote(protocol, cfg, spec):
             plan = {"upload": sorted(local_struct.keys()), "delete": [], "skip": []}
-            if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False, spec=spec):
+            success = run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False, spec=spec)
+            failed_count = run_sync_action.last_result.get("failed", 0)
+            log_action(
+                project_path, "Force Upload", stats, direction="upload", force=True,
+                filtered_count=len(filtered_paths), failed_count=failed_count,
+                elapsed=time.perf_counter() - started_at, remote_scan=scan_meta["remote_scan"],
+                status="success" if success else "failed"
+            )
+            if success:
                 clean_state = _save_clean_state(project_path, local_struct, spec)
                 _push_clean_remote_state(protocol, cfg, clean_state, spec)
-                log_action(project_path, "Force Upload", {"added": len(local_struct)})
                 print_success("首次同步完成！")
                 return True
         return False
@@ -237,12 +269,13 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_warning("本地无同步记录。请使用“强制上传”或先执行“强制下载”初始化状态。")
         return False
 
-    target_for_plan, real_remote_ignored = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec)
+    target_for_plan, real_remote_ignored = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec, scan_meta)
     remote_ignored = _merge_ignored(remote_ignored, real_remote_ignored)
     target_for_plan = target_for_plan if target_for_plan is not None else local_state
     plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, base_struct=local_state)
+    filtered_paths = _merge_ignored(state_ignored, remote_ignored, local_ignored)
     
-    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored))
+    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths=filtered_paths)
 
     if stats.get("conflict"):
         print_warning(f"检测到 {stats['conflict']} 处冲突！")
@@ -251,27 +284,41 @@ def sync_to_remote(project_path: Path, spec, force=False):
             
     if not (plan["upload"] or plan["delete"]):
         print_success("本地与远程已同步，无需操作。")
+        log_action(
+            project_path, "Incremental Sync", stats, direction="upload", force=False,
+            filtered_count=len(filtered_paths), elapsed=time.perf_counter() - started_at,
+            remote_scan=scan_meta["remote_scan"], status="no-op"
+        )
         return True
 
     confirm = _confirm_sync_plan("确认执行同步计划？")
     if confirm == "run":
-        if run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False, spec=spec):
+        success = run_sync_action(project_path, cfg, protocol, plan, local_struct, is_download=False, spec=spec)
+        failed_count = run_sync_action.last_result.get("failed", 0)
+        log_action(
+            project_path, "Incremental Sync", stats, direction="upload", force=False,
+            filtered_count=len(filtered_paths), failed_count=failed_count,
+            elapsed=time.perf_counter() - started_at, remote_scan=scan_meta["remote_scan"],
+            status="success" if success else "failed"
+        )
+        if success:
             clean_state = _save_clean_state(project_path, local_struct, spec)
             _push_clean_remote_state(protocol, cfg, clean_state, spec)
-            log_action(project_path, "Incremental Sync", stats)
             print_success("同步成功！")
             return True
     return False
 
 def sync_from_remote(project_path: Path, spec, force=False):
+    started_at = time.perf_counter()
     config = get_server_config(project_path)
     if not config: return False
     protocol, cfg = config
+    scan_meta = {"remote_scan": False}
 
     local_state, state_ignored = _load_filtered_local_state(project_path, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, remote_ignored = _filter_structure(remote_state, spec)
-    remote_state, real_remote_ignored = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec)
+    remote_state, real_remote_ignored = _resolve_remote_target(protocol, cfg, local_state, remote_state, spec, scan_meta)
     remote_ignored = _merge_ignored(remote_ignored, real_remote_ignored)
 
     if force:
@@ -287,16 +334,42 @@ def sync_from_remote(project_path: Path, spec, force=False):
         local_struct = get_local_structure(project_path, project_path, spec, local_ignored)
         plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
 
-    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True, filtered_paths=_merge_ignored(state_ignored, local_ignored, remote_ignored))
+    filtered_paths = _merge_ignored(state_ignored, local_ignored, remote_ignored)
+    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True, filtered_paths=filtered_paths)
 
     if not (plan["upload"] or plan["delete"]):
         print_success("本地已是最新，无需操作。")
         _save_clean_state(project_path, remote_state, spec)
+        log_action(
+            project_path,
+            "Force Download" if force else "Download Sync",
+            stats,
+            direction="download",
+            force=force,
+            filtered_count=len(filtered_paths),
+            elapsed=time.perf_counter() - started_at,
+            remote_scan=scan_meta["remote_scan"],
+            status="no-op"
+        )
         return True
 
     confirm_message = "确认同步云端到本地吗？本地多余文件将被删除" if force else "确认同步？"
     if _confirm_sync_plan(confirm_message) == "run":
-        if run_sync_action(project_path, cfg, protocol, plan, remote_state, is_download=True, spec=spec):
+        success = run_sync_action(project_path, cfg, protocol, plan, remote_state, is_download=True, spec=spec)
+        failed_count = run_sync_action.last_result.get("failed", 0)
+        log_action(
+            project_path,
+            "Force Download" if force else "Download Sync",
+            stats,
+            direction="download",
+            force=force,
+            filtered_count=len(filtered_paths),
+            failed_count=failed_count,
+            elapsed=time.perf_counter() - started_at,
+            remote_scan=scan_meta["remote_scan"],
+            status="success" if success else "failed"
+        )
+        if success:
             new_local = get_local_structure(project_path, project_path, spec)
             clean_state = _save_clean_state(project_path, new_local, spec)
             _push_clean_remote_state(protocol, cfg, clean_state, spec)

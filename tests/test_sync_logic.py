@@ -47,11 +47,13 @@ class SyncLogicTests(unittest.TestCase):
                 return scanned
 
             with patch("src.sync.manager.get_real_remote_structure", side_effect=fake_scan) as scan:
-                target, remote_ignored = manager._resolve_remote_target("ftp", {}, local_state, remote_state, spec)
+                scan_meta = {"remote_scan": False}
+                target, remote_ignored = manager._resolve_remote_target("ftp", {}, local_state, remote_state, spec, scan_meta)
 
         scan.assert_called_once()
         self.assertEqual(target, scanned)
         self.assertEqual(set(remote_ignored), {"server.json"})
+        self.assertTrue(scan_meta["remote_scan"])
 
     def test_resolve_remote_target_respects_scan_mismatch_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,6 +138,32 @@ class SyncLogicTests(unittest.TestCase):
             comm._print_remote_scan_stats({"dirs": 2, "files": 3, "filtered": 1}, 0)
 
         self.assertTrue(any("目录 2" in item and "文件 3" in item and "已过滤 1" in item for item in captured))
+
+    def test_log_action_writes_enhanced_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            manager.log_action(
+                project,
+                "Incremental Sync",
+                {"added": 1, "updated": 2, "deleted": 3, "conflict": 4},
+                direction="upload",
+                force=False,
+                filtered_count=5,
+                failed_count=6,
+                elapsed=1.25,
+                remote_scan=True,
+                status="failed"
+            )
+
+            log_text = (project / SYNC_STATE_FILENAME.replace("state", "log")).read_text(encoding="utf-8")
+
+        self.assertIn("Incremental Sync", log_text)
+        self.assertIn("status=failed", log_text)
+        self.assertIn("direction=upload", log_text)
+        self.assertIn("filtered=5", log_text)
+        self.assertIn("failed=6", log_text)
+        self.assertIn("remote_scan=True", log_text)
+        self.assertIn("elapsed=1.25s", log_text)
 
 
 if __name__ == "__main__":
