@@ -36,11 +36,12 @@ def _filtered_label(info):
         return f"[已过滤: {escape(str(source))}]"
     return "[已过滤]"
 
-def display_sync_tree(path_states, source_struct, target_struct, project_name, stats, is_download=False, filtered_paths=None):
+def display_sync_tree(path_states, source_struct, target_struct, project_name, stats, is_download=False, filtered_paths=None, added_label=None):
     """显示优化的同步预览树"""
     filtered_paths = filtered_paths or {}
     action_text = "下载" if is_download else "上传"
-    summary = f"[bold green]+ {stats['added']} 待{action_text}[/bold green]  " \
+    added_label = added_label or f"待{action_text}"
+    summary = f"[bold green]+ {stats['added']} {added_label}[/bold green]  " \
               f"[bold yellow]~ {stats['updated']} 待更新[/bold yellow]  " \
               f"[bold red]- {stats['deleted']} 待删除[/bold red]"
     if stats.get("conflict"):

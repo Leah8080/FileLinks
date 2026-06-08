@@ -1,7 +1,8 @@
-import os
 from pathlib import Path
 import pathspec
 from src.config_loader import load_config
+
+IGNORE_SYNTAX = "gitignore"
 
 def ensure_essential_ignores(project_path: Path):
     """
@@ -73,8 +74,12 @@ def get_ignore_spec(project_path: Path):
     for f in ["server.json", ".sync_state", ".sync_log", "link.md"]:
         add_pattern(f, "内置安全规则")
 
-    spec = pathspec.PathSpec.from_lines('gitwildmatch', all_patterns)
+    spec = pathspec.PathSpec.from_lines(IGNORE_SYNTAX, all_patterns)
     spec._filelinks_rule_sources = pattern_sources
+    spec._filelinks_rule_specs = [
+        (pathspec.PathSpec.from_lines(IGNORE_SYNTAX, [pattern]), source)
+        for pattern, source in pattern_sources
+    ]
     return spec
 
 def is_ignored(path: Path, project_path: Path, spec: pathspec.PathSpec, is_dir: bool = False) -> bool:
@@ -89,8 +94,8 @@ def is_ignored_path(path_str: str, spec: pathspec.PathSpec, is_dir: bool = False
 
 def get_ignore_match_source(path_str: str, spec: pathspec.PathSpec, is_dir: bool = False) -> str:
     match_path = _normalize_match_path(path_str, is_dir)
-    for pattern, source in getattr(spec, "_filelinks_rule_sources", []):
-        if pathspec.PathSpec.from_lines("gitwildmatch", [pattern]).match_file(match_path):
+    for rule_spec, source in getattr(spec, "_filelinks_rule_specs", []):
+        if rule_spec.match_file(match_path):
             return source
     return "忽略配置"
 

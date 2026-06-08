@@ -208,7 +208,15 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_warning("⚠️ [bold red]强制上传模式[/bold red]：将以本地文件为准，覆盖远程内容。")
         path_states = {path: "added" for path in local_struct}
         stats = {"added": _count_files(local_struct), "updated": 0, "deleted": 0, "conflict": 0}
-        display_sync_tree(path_states, local_struct, {}, project_path.name, stats, filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored))
+        display_sync_tree(
+            path_states,
+            local_struct,
+            {},
+            project_path.name,
+            stats,
+            filtered_paths=_merge_ignored(state_ignored, remote_ignored, local_ignored),
+            added_label="将重建远程"
+        )
         confirm = _confirm_sync_plan("确认清空远程并重新上传吗？被忽略的远程文件会保留")
         if confirm != "run":
             return False

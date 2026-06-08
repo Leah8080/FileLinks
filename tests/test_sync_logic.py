@@ -1,11 +1,13 @@
 import json
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
 from src.filter import get_ignore_match_source, get_ignore_spec
 from src.sync import manager
+from src.sync import view
 from src.sync.scanner import SYNC_STATE_FILENAME
 
 
@@ -67,6 +69,42 @@ class SyncLogicTests(unittest.TestCase):
             source = get_ignore_match_source("debug.log", spec)
 
             self.assertEqual(source, ".gitignore:1")
+
+    def test_ignore_spec_uses_non_deprecated_syntax(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / ".gitignore").write_text("*.log\n", encoding="utf-8")
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec = get_ignore_spec(project)
+                self.assertTrue(spec.match_file("debug.log"))
+
+            deprecated = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+            self.assertEqual(deprecated, [])
+
+    def test_sync_tree_uses_custom_added_label(self):
+        captured = []
+
+        class FakeConsole:
+            def print(self, value):
+                captured.append(str(getattr(value, "renderable", value)))
+
+        original_console = view.console
+        try:
+            view.console = FakeConsole()
+            view.display_sync_tree(
+                {"index.html": "added"},
+                {"index.html": {"type": "file", "size": 1}},
+                {},
+                "demo",
+                {"added": 1, "updated": 0, "deleted": 0, "conflict": 0},
+                added_label="将重建远程"
+            )
+        finally:
+            view.console = original_console
+
+        self.assertTrue(any("将重建远程" in item for item in captured))
 
 
 if __name__ == "__main__":
