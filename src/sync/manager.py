@@ -112,6 +112,7 @@ def smart_sync(project_path: Path, spec):
 
     local_struct = get_local_structure(project_path, project_path, spec)
     local_state = load_sync_state(project_path)
+    local_state, _ = _filter_structure(local_state, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, _ = _filter_structure(remote_state, spec)
 
@@ -141,6 +142,7 @@ def sync_to_remote(project_path: Path, spec, force=False):
     local_ignored = {}
     local_struct = get_local_structure(project_path, project_path, spec, local_ignored)
     local_state = load_sync_state(project_path)
+    local_state, state_ignored = _filter_structure(local_state, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, remote_ignored = _filter_structure(remote_state, spec)
 
@@ -148,7 +150,7 @@ def sync_to_remote(project_path: Path, spec, force=False):
         print_warning("⚠️ [bold red]强制上传模式[/bold red]：将以本地文件为准，覆盖远程内容。")
         path_states = {path: "added" for path in local_struct}
         stats = {"added": _count_files(local_struct), "updated": 0, "deleted": 0, "conflict": 0}
-        display_sync_tree(path_states, local_struct, {}, project_path.name, stats, filtered_paths={**remote_ignored, **local_ignored})
+        display_sync_tree(path_states, local_struct, {}, project_path.name, stats, filtered_paths={**state_ignored, **remote_ignored, **local_ignored})
         if not ask_confirm("确认清空远程并重新上传吗？"): return False
         if wipe_remote(protocol, cfg, spec):
             plan = {"upload": sorted(local_struct.keys()), "delete": [], "skip": []}
@@ -167,7 +169,7 @@ def sync_to_remote(project_path: Path, spec, force=False):
     target_for_plan = remote_state if remote_state else local_state
     plan, path_states, stats = generate_sync_plan(local_struct, target_for_plan, base_struct=local_state)
     
-    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths={**remote_ignored, **local_ignored})
+    display_sync_tree(path_states, local_struct, target_for_plan, project_path.name, stats, filtered_paths={**state_ignored, **remote_ignored, **local_ignored})
 
     if remote_state and remote_state != local_state:
         print_warning("⚠️ 远程状态已更新，本地记录已过时。")
@@ -201,6 +203,7 @@ def sync_from_remote(project_path: Path, spec, force=False):
     protocol, cfg = config
 
     local_state = load_sync_state(project_path)
+    local_state, state_ignored = _filter_structure(local_state, spec)
     remote_state = fetch_remote_state(protocol, cfg)
     remote_state, remote_ignored = _filter_structure(remote_state, spec)
     
@@ -222,7 +225,7 @@ def sync_from_remote(project_path: Path, spec, force=False):
         local_struct = get_local_structure(project_path, project_path, spec, local_ignored)
         plan, path_states, stats = generate_sync_plan(remote_state, local_struct, local_state)
 
-    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True, filtered_paths={**local_ignored, **remote_ignored})
+    display_sync_tree(path_states, remote_state, local_struct, project_path.name, stats, is_download=True, filtered_paths={**state_ignored, **local_ignored, **remote_ignored})
 
     if not (plan["upload"] or plan["delete"]):
         print_success("本地已是最新，无需操作。")
