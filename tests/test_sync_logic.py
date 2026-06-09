@@ -8,6 +8,7 @@ from unittest.mock import patch
 from src.filter import get_ignore_match_source, get_ignore_spec
 from src.config_loader import validate_config
 from src.sync import comm
+from src.sync.engine import generate_bidirectional_plan, generate_one_way_plan
 from src.sync import manager
 from src.sync import remote_scan
 from src.sync import view
@@ -15,6 +16,77 @@ from src.sync.scanner import SYNC_STATE_FILENAME
 
 
 class SyncLogicTests(unittest.TestCase):
+    def test_one_way_plan_skips_same_and_uploads_changed(self):
+        source = {
+            "index.html": {"type": "file", "size": 10, "md5": "a"},
+            "style.css": {"type": "file", "size": 20, "md5": "new"},
+        }
+        target = {
+            "index.html": {"type": "file", "size": 10, "md5": "a"},
+            "style.css": {"type": "file", "size": 20, "md5": "old"},
+            "old.txt": {"type": "file", "size": 1, "md5": "x"},
+        }
+
+        plan, path_states, stats = generate_one_way_plan(source, target)
+
+        self.assertEqual(plan["upload"], ["style.css"])
+        self.assertEqual(plan["delete"], ["old.txt"])
+        self.assertIn("index.html", plan["skip"])
+        self.assertEqual(path_states["style.css"], "updated")
+        self.assertEqual(stats["updated"], 1)
+        self.assertEqual(stats["deleted"], 1)
+
+    def test_one_way_plan_predeletes_type_replacement_children(self):
+        source = {"assets": {"type": "file", "size": 1, "md5": "file"}}
+        target = {
+            "assets": {"type": "dir", "size": 0},
+            "assets/app.js": {"type": "file", "size": 10, "md5": "old"},
+        }
+
+        plan, path_states, stats = generate_one_way_plan(source, target)
+
+        self.assertEqual(plan["upload"], ["assets"])
+        self.assertEqual(set(plan["pre_delete"]), {"assets", "assets/app.js"})
+        self.assertEqual(plan["delete"], [])
+        self.assertEqual(path_states["assets/app.js"], "deleted")
+        self.assertEqual(stats["deleted"], 1)
+
+    def test_bidirectional_plan_uploads_and_downloads_single_sided_changes(self):
+        base = {
+            "local.html": {"type": "file", "size": 1, "md5": "a"},
+            "remote.html": {"type": "file", "size": 1, "md5": "b"},
+        }
+        local = {
+            "local.html": {"type": "file", "size": 2, "md5": "a2"},
+            "remote.html": {"type": "file", "size": 1, "md5": "b"},
+            "new-local.txt": {"type": "file", "size": 1, "md5": "c"},
+        }
+        remote = {
+            "local.html": {"type": "file", "size": 1, "md5": "a"},
+            "remote.html": {"type": "file", "size": 2, "md5": "b2"},
+            "new-remote.txt": {"type": "file", "size": 1, "md5": "d"},
+        }
+
+        plan, path_states, stats = generate_bidirectional_plan(local, remote, base)
+
+        self.assertEqual(set(plan["upload"]), {"local.html", "new-local.txt"})
+        self.assertEqual(set(plan["download"]), {"remote.html", "new-remote.txt"})
+        self.assertEqual(plan["conflict"], [])
+        self.assertEqual(path_states["new-remote.txt"], "download")
+        self.assertEqual(stats["upload"], 2)
+        self.assertEqual(stats["download"], 2)
+
+    def test_bidirectional_plan_detects_conflicts(self):
+        base = {"index.html": {"type": "file", "size": 1, "md5": "base"}}
+        local = {"index.html": {"type": "file", "size": 2, "md5": "local"}}
+        remote = {"index.html": {"type": "file", "size": 3, "md5": "remote"}}
+
+        plan, path_states, stats = generate_bidirectional_plan(local, remote, base)
+
+        self.assertEqual(plan["conflict"], ["index.html"])
+        self.assertEqual(path_states["index.html"], "conflict")
+        self.assertEqual(stats["conflict"], 1)
+
     def test_load_filtered_local_state_writes_clean_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)

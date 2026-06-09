@@ -93,6 +93,59 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
             
     console.print(tree)
 
+
+def display_bidirectional_sync_tree(path_states, local_struct, remote_struct, project_name, stats, filtered_paths=None):
+    """显示双向同步预览树。"""
+    filtered_paths = filtered_paths or {}
+    summary = f"[bold green]↑ {stats['upload']} 上传[/bold green]  " \
+              f"[bold cyan]↓ {stats['download']} 下载[/bold cyan]  " \
+              f"[bold red]-R {stats['delete_remote']} 删远程[/bold red]  " \
+              f"[bold red]-L {stats['delete_local']} 删本地[/bold red]"
+    if stats.get("conflict"):
+        summary += f"  [bold magenta]! {stats['conflict']} 冲突[/bold magenta]"
+    if filtered_paths:
+        summary += _format_filtered_summary(filtered_paths)
+
+    console.print(Panel(summary, title="📊 双向同步摘要", expand=False))
+
+    tree = Tree(f"[bold blue]📁 {project_name}[/bold blue]")
+    nodes = {"": tree}
+    all_paths = sorted(set(path_states.keys()) | set(filtered_paths.keys()))
+    config = load_config()
+    icon_map = config.get("icons", {})
+
+    labels = {
+        "upload": ("bold green", "[上传]"),
+        "download": ("bold cyan", "[下载]"),
+        "delete_remote": ("bold red", "[删远程]"),
+        "delete_local": ("bold red", "[删本地]"),
+        "conflict": ("bold magenta", "[冲突]"),
+        "none": ("dim", ""),
+        "filtered": ("dim", ""),
+    }
+
+    for path in all_paths:
+        parts = path.split("/")
+        parent = "/".join(parts[:-1])
+        name = parts[-1]
+        state = "filtered" if path in filtered_paths else path_states[path]
+        style, label = labels.get(state, ("dim", ""))
+        if state == "filtered":
+            label = _filtered_label(filtered_paths[path])
+
+        info = local_struct.get(path) or remote_struct.get(path) or filtered_paths.get(path)
+        is_dir = info["type"] == "dir"
+        if is_dir:
+            icon = "📁"
+        else:
+            icon = icon_map.get(Path(name).suffix.lower(), "📄")
+
+        display_text = f"[{style}]{icon} {name} {label}[/{style}]"
+        _ensure_parent_node(nodes, parent)
+        nodes[path] = nodes[parent].add(display_text)
+
+    console.print(tree)
+
 def display_remote_tree(remote_struct, project_name, filtered_paths=None):
     """显示远程主机的文件树结构"""
     filtered_paths = filtered_paths or {}

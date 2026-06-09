@@ -88,7 +88,66 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
         except Exception as e:
             return False, (path, str(e))
 
+    def delete_paths(paths):
+        if not paths:
+            return
+        try:
+            if protocol == "ftp":
+                with ftplib.FTP() as ftp:
+                    ftp.set_pasv(True)
+                    ftp.connect(config["host"], config.get("port", 21), timeout=60)
+                    ftp.login(config["user"], config["password"])
+                    base = normalize_path(config.get("remote_path") or ftp.pwd())
+                    for path in reversed(paths):
+                        try:
+                            if is_download:
+                                item = project_root / path
+                                remove_local_item(item, path)
+                            else:
+                                item = normalize_path(f"{base}/{path}")
+                                try:
+                                    ftp.delete(item)
+                                except Exception:
+                                    try:
+                                        ftp.rmd(item)
+                                    except Exception:
+                                        pass
+                        except Exception as e:
+                            failed_files.append((path, str(e)))
+            else:
+                import paramiko
+
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
+                sftp = ssh.open_sftp()
+                base = normalize_path(config.get("remote_path") or sftp.normalize("."))
+                for path in reversed(paths):
+                    try:
+                        if is_download:
+                            item = project_root / path
+                            remove_local_item(item, path)
+                        else:
+                            item = normalize_path(f"{base}/{path}")
+                            try:
+                                sftp.remove(item)
+                            except Exception:
+                                try:
+                                    sftp.rmdir(item)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        failed_files.append((path, str(e)))
+                sftp.close()
+                ssh.close()
+        except Exception as e:
+            print_error(f"清理阶段失败: {e}")
+
     print_step(f"正在准备{'下载' if is_download else '上传'}队列...")
+    if plan.get("pre_delete"):
+        print_step(f"正在预清理{'本地' if is_download else '远程'}待覆盖路径...")
+        delete_paths(plan["pre_delete"])
+
     dirs = [p for p in plan["upload"] if source_struct.get(p, {}).get("type") == "dir"]
     files = [p for p in plan["upload"] if source_struct.get(p, {}).get("type") != "dir"]
 
@@ -124,57 +183,7 @@ def run_sync_action(project_root, config, protocol, plan, source_struct, is_down
 
     if plan["delete"]:
         print_step(f"正在清理{'本地' if is_download else '远程'}多余文件...")
-        try:
-            if protocol == "ftp":
-                with ftplib.FTP() as ftp:
-                    ftp.set_pasv(True)
-                    ftp.connect(config["host"], config.get("port", 21), timeout=60)
-                    ftp.login(config["user"], config["password"])
-                    base = normalize_path(config.get("remote_path") or ftp.pwd())
-                    for path in reversed(plan["delete"]):
-                        try:
-                            if is_download:
-                                item = project_root / path
-                                remove_local_item(item, path)
-                            else:
-                                item = normalize_path(f"{base}/{path}")
-                                try:
-                                    ftp.delete(item)
-                                except Exception:
-                                    try:
-                                        ftp.rmd(item)
-                                    except Exception:
-                                        pass
-                        except Exception as e:
-                            failed_files.append((path, str(e)))
-            else:
-                import paramiko
-
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(config["host"], config.get("port", 22), config["user"], config["password"])
-                sftp = ssh.open_sftp()
-                base = normalize_path(config.get("remote_path") or sftp.normalize("."))
-                for path in reversed(plan["delete"]):
-                    try:
-                        if is_download:
-                            item = project_root / path
-                            remove_local_item(item, path)
-                        else:
-                            item = normalize_path(f"{base}/{path}")
-                            try:
-                                sftp.remove(item)
-                            except Exception:
-                                try:
-                                    sftp.rmdir(item)
-                                except Exception:
-                                    pass
-                    except Exception as e:
-                        failed_files.append((path, str(e)))
-                sftp.close()
-                ssh.close()
-        except Exception as e:
-            print_error(f"清理阶段失败: {e}")
+        delete_paths(plan["delete"])
 
     if failed_files:
         run_sync_action.last_result = {"failed": len(failed_files)}
