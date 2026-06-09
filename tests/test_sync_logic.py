@@ -1,9 +1,12 @@
 import json
+import io
 import tempfile
 import unittest
 import warnings
 from pathlib import Path
 from unittest.mock import patch
+
+from rich.console import Console
 
 from src.filter import get_ignore_match_source, get_ignore_spec
 from src.config_loader import validate_config
@@ -182,15 +185,12 @@ class SyncLogicTests(unittest.TestCase):
             self.assertEqual(deprecated, [])
 
     def test_sync_tree_uses_custom_added_label(self):
-        captured = []
-
-        class FakeConsole:
-            def print(self, value):
-                captured.append(str(getattr(value, "renderable", value)))
+        output = io.StringIO()
+        test_console = Console(file=output, force_terminal=False, color_system=None, width=120)
 
         original_console = view.console
         try:
-            view.console = FakeConsole()
+            view.console = test_console
             view.display_sync_tree(
                 {"index.html": "added"},
                 {"index.html": {"type": "file", "size": 1}},
@@ -202,7 +202,10 @@ class SyncLogicTests(unittest.TestCase):
         finally:
             view.console = original_console
 
-        self.assertTrue(any("将重建远程" in item for item in captured))
+        rendered = output.getvalue()
+        self.assertIn("将重建远程", rendered)
+        self.assertIn("index.html", rendered)
+        self.assertIn("同步预览", rendered)
 
     def test_remote_scan_stats_output(self):
         captured = []

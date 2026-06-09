@@ -2,6 +2,7 @@ from pathlib import Path
 from rich.tree import Tree
 from rich.panel import Panel
 from rich.markup import escape
+from rich.console import Group
 from src.ui import console
 from src.config_loader import load_config
 
@@ -49,8 +50,6 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
     if filtered_paths:
         summary += _format_filtered_summary(filtered_paths)
         
-    console.print(Panel(summary, title="📊 同步摘要", expand=False))
-    
     tree = Tree(f"[bold blue]📁 {project_name}[/bold blue]")
     nodes = {"": tree}
     all_paths = sorted(set(path_states.keys()) | set(filtered_paths.keys()))
@@ -91,7 +90,7 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
         _ensure_parent_node(nodes, parent)
         nodes[path] = nodes[parent].add(display_text)
             
-    console.print(tree)
+    console.print(Panel(Group(summary, tree), title="📊 同步预览", border_style="cyan", expand=False))
 
 
 def display_bidirectional_sync_tree(path_states, local_struct, remote_struct, project_name, stats, filtered_paths=None):
@@ -105,8 +104,6 @@ def display_bidirectional_sync_tree(path_states, local_struct, remote_struct, pr
         summary += f"  [bold magenta]! {stats['conflict']} 冲突[/bold magenta]"
     if filtered_paths:
         summary += _format_filtered_summary(filtered_paths)
-
-    console.print(Panel(summary, title="📊 双向同步摘要", expand=False))
 
     tree = Tree(f"[bold blue]📁 {project_name}[/bold blue]")
     nodes = {"": tree}
@@ -144,7 +141,7 @@ def display_bidirectional_sync_tree(path_states, local_struct, remote_struct, pr
         _ensure_parent_node(nodes, parent)
         nodes[path] = nodes[parent].add(display_text)
 
-    console.print(tree)
+    console.print(Panel(Group(summary, tree), title="📊 双向同步预览", border_style="cyan", expand=False))
 
 def display_remote_tree(remote_struct, project_name, filtered_paths=None):
     """显示远程主机的文件树结构"""
