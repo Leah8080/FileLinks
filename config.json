@@ -2,6 +2,7 @@
   "max_history": 16,
   "max_workers": 3,
   "preview_port": 8000,
+  "remote_scan_on_state_mismatch": true,
   "ignore": [
     ".gitignore",
     ".surgeignore"

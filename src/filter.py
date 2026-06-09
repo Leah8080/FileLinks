@@ -1,8 +1,8 @@
-import os
 from pathlib import Path
 import pathspec
 from src.config_loader import load_config
-from src.ui import print_success
+
+IGNORE_SYNTAX = "gitignore"
 
 def ensure_essential_ignores(project_path: Path):
     """
@@ -51,31 +51,56 @@ def get_ignore_spec(project_path: Path):
     ignore_config = config.get("ignore", [".gitignore", ".surgeignore"])
     
     all_patterns = []
+    pattern_sources = []
+    seen_patterns = set()
+
+    def add_pattern(pattern: str, source: str):
+        pattern = pattern.strip()
+        if not pattern or pattern.startswith("#") or pattern in seen_patterns:
+            return
+        seen_patterns.add(pattern)
+        all_patterns.append(pattern)
+        pattern_sources.append((pattern, source))
     
     # 收集配置中的所有忽略模式
     for pattern in ignore_config:
-        all_patterns.append(pattern)
+        add_pattern(pattern, "config.json:ignore")
         potential_file = project_path / pattern
         if potential_file.is_file():
-            all_patterns.extend(potential_file.read_text(encoding="utf-8").splitlines())
-    
-    # 去重并去除空行
-    all_patterns = list(set([p.strip() for p in all_patterns if p.strip()]))
+            for line_no, line in enumerate(potential_file.read_text(encoding="utf-8").splitlines(), start=1):
+                add_pattern(line, f"{potential_file.name}:{line_no}")
     
     # 兜底确保这几个关键文件在内存 spec 中也存在
     for f in ["server.json", ".sync_state", ".sync_log", "link.md"]:
-        if f not in all_patterns:
-            all_patterns.append(f)
+        add_pattern(f, "内置安全规则")
 
-    spec = pathspec.PathSpec.from_lines('gitwildmatch', all_patterns)
+    spec = pathspec.PathSpec.from_lines(IGNORE_SYNTAX, all_patterns)
+    spec._filelinks_rule_sources = pattern_sources
+    spec._filelinks_rule_specs = [
+        (pathspec.PathSpec.from_lines(IGNORE_SYNTAX, [pattern]), source)
+        for pattern, source in pattern_sources
+    ]
     return spec
 
 def is_ignored(path: Path, project_path: Path, spec: pathspec.PathSpec, is_dir: bool = False) -> bool:
     try:
         relative_path = path.relative_to(project_path)
-        path_str = str(relative_path)
-        if is_dir and not path_str.endswith("/"):
-            path_str += "/"
-        return spec.match_file(path_str)
+        return is_ignored_path(relative_path.as_posix(), spec, is_dir)
     except ValueError:
         return False
+
+def is_ignored_path(path_str: str, spec: pathspec.PathSpec, is_dir: bool = False) -> bool:
+    return spec.match_file(_normalize_match_path(path_str, is_dir))
+
+def get_ignore_match_source(path_str: str, spec: pathspec.PathSpec, is_dir: bool = False) -> str:
+    match_path = _normalize_match_path(path_str, is_dir)
+    for rule_spec, source in getattr(spec, "_filelinks_rule_specs", []):
+        if rule_spec.match_file(match_path):
+            return source
+    return "忽略配置"
+
+def _normalize_match_path(path_str: str, is_dir: bool = False) -> str:
+    path_str = path_str.replace("\\", "/").strip("/")
+    if is_dir and not path_str.endswith("/"):
+        path_str += "/"
+    return path_str

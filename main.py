@@ -236,6 +236,9 @@ def main():
                 print_error("无效的选择，请重新输入。")
                 input("\n按回车键继续...")
 
+    except KeyboardInterrupt:
+        preview_manager.stop()
+        print_info("已取消操作，退出脚本。")
     except Exception as e:
         print_error(f"发生意外错误: {e}")
         import traceback
