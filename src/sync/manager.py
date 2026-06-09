@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from src.ui import print_info, print_success, print_error, print_warning, ask_confirm, ask_input, console
+from src.ui import print_info, print_success, print_error, print_warning, print_step, ask_confirm, ask_input, console
 from src.sync.scanner import get_local_structure
 from src.sync.engine import generate_bidirectional_plan, generate_one_way_plan, generate_sync_plan
 from src.sync.comm import fetch_remote_state, run_sync_action, get_real_remote_structure
