@@ -52,7 +52,13 @@ def display_sync_tree(path_states, source_struct, target_struct, project_name, s
         
     tree = Tree(f"[bold blue]📁 {project_name}[/bold blue]")
     nodes = {"": tree}
-    all_paths = sorted(set(path_states.keys()) | set(filtered_paths.keys()))
+    
+    def get_sort_key(p):
+        info = source_struct.get(p) or target_struct.get(p) or filtered_paths.get(p)
+        is_dir = info.get("type") == "dir" if info else False
+        return (0 if is_dir else 1, p)
+        
+    all_paths = sorted(set(path_states.keys()) | set(filtered_paths.keys()), key=get_sort_key)
     
     config = load_config()
     icon_map = config.get("icons", {})
@@ -107,7 +113,13 @@ def display_bidirectional_sync_tree(path_states, local_struct, remote_struct, pr
 
     tree = Tree(f"[bold blue]📁 {project_name}[/bold blue]")
     nodes = {"": tree}
-    all_paths = sorted(set(path_states.keys()) | set(filtered_paths.keys()))
+    
+    def get_sort_key(p):
+        info = local_struct.get(p) or remote_struct.get(p) or filtered_paths.get(p)
+        is_dir = info.get("type") == "dir" if info else False
+        return (0 if is_dir else 1, p)
+
+    all_paths = sorted(set(path_states.keys()) | set(filtered_paths.keys()), key=get_sort_key)
     config = load_config()
     icon_map = config.get("icons", {})
 
@@ -148,7 +160,14 @@ def display_remote_tree(remote_struct, project_name, filtered_paths=None):
     filtered_paths = filtered_paths or {}
     tree = Tree(f"[bold blue]🖥️ 远程主机: {project_name}[/bold blue]")
     nodes = {"": tree}
-    all_paths = sorted(set(remote_struct.keys()) | set(filtered_paths.keys()))
+    
+    def get_sort_key(p):
+        is_filtered = p in filtered_paths
+        info = filtered_paths[p] if is_filtered else remote_struct[p]
+        is_dir = info.get("type") == "dir" if info else False
+        return (0 if is_dir else 1, p)
+        
+    all_paths = sorted(set(remote_struct.keys()) | set(filtered_paths.keys()), key=get_sort_key)
     
     config = load_config()
     icon_map = config.get("icons", {})

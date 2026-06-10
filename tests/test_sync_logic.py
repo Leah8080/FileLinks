@@ -207,6 +207,34 @@ class SyncLogicTests(unittest.TestCase):
         self.assertIn("index.html", rendered)
         self.assertIn("同步预览", rendered)
 
+    def test_sync_tree_sorts_folders_first(self):
+        output = io.StringIO()
+        test_console = Console(file=output, force_terminal=False, color_system=None, width=120)
+
+        original_console = view.console
+        try:
+            view.console = test_console
+            # File 'FileB.txt', Folder 'FolderA'
+            path_states = {"FileB.txt": "added", "FolderA": "added"}
+            source_struct = {
+                "FileB.txt": {"type": "file", "size": 1},
+                "FolderA": {"type": "dir", "size": 0}
+            }
+            view.display_sync_tree(
+                path_states,
+                source_struct,
+                {},
+                "demo",
+                {"added": 2, "updated": 0, "deleted": 0, "conflict": 0}
+            )
+        finally:
+            view.console = original_console
+
+        rendered = output.getvalue()
+        pos_folder = rendered.find("FolderA")
+        pos_file = rendered.find("FileB.txt")
+        self.assertLess(pos_folder, pos_file, "FolderA should appear before FileB.txt")
+
     def test_remote_scan_stats_output(self):
         captured = []
 

@@ -30,6 +30,7 @@ def generate_links_grouped(project_path: Path, base_url: str, spec, icons_config
             else:
                 visible_dirs.append(d)
         
+        visible_dirs.sort()
         dirs[:] = visible_dirs
         rel_root = Path(root).relative_to(project_path)
         
