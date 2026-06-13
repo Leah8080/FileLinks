@@ -4,7 +4,7 @@ from pathlib import Path
 from src.ui import print_success, print_info, print_error, ask_input
 
 def get_cname_domain(project_path: Path) -> str:
-    """从 CNAME 文件动态获取项目主页"""
+    """从 CNAME 文件动态获取项目首页"""
     cname_file = project_path / "CNAME"
     if cname_file.exists():
         try:
@@ -16,20 +16,20 @@ def get_cname_domain(project_path: Path) -> str:
     return ""
 
 def manage_domain_config(project_path: Path):
-    """交互式管理项目主页配置 (CNAME 文件)"""
+    """交互式管理项目首页配置 (CNAME 文件)"""
     from src.ui import print_step, print_info, print_success, print_error, ask_input
-    print_step("配置项目主页")
+    print_step("配置项目首页")
     current_url = get_cname_domain(project_path)
     
     print_info("提示：直接回车将保留默认值/当前值")
-    new_url = ask_input(f"项目主页 [当前: [magenta]{current_url if current_url else '未配置'}[/magenta]]") or current_url
+    new_url = ask_input(f"项目首页 [当前: [magenta]{current_url if current_url else '未配置'}[/magenta]]") or current_url
     
     if new_url:
         try:
             # 确保保存时不带额外的空格，并保持统一格式
             clean_url = new_url.strip()
             (project_path / "CNAME").write_text(clean_url, encoding="utf-8")
-            print_success(f"项目主页已更新并保存到 CNAME: {clean_url}")
+            print_success(f"项目首页已更新并保存到 CNAME: {clean_url}")
             return True
         except Exception as e:
             print_error(f"保存 CNAME 失败: {e}")

@@ -109,13 +109,14 @@ def main():
             if server_info:
                 proto, cfg = server_info
                 # 脱敏显示密码
-                mask_pass = "*" * len(cfg.get("password", "")) if cfg.get("password") else "未设置"
+                mask_pass = "*" * len(cfg.get("password", "")) if cfg.get("password") else "[yellow]为配置[/]"
+                remote_path_display = cfg.get('remote_path') if cfg.get('remote_path') else "[yellow]未配置[/]([dim]使用根路径[/][green]'/'[/])"
                 host_display = f"[bold cyan]🖥️ 远程主机:[/bold cyan] {proto}://{cfg.get('user')}@{cfg.get('host')}:{cfg.get('port')}\n"
-                host_display += f"[bold cyan]📂 远程路径:[/bold cyan] {cfg.get('remote_path')}\n"
-                host_display += f"[bold cyan]🌐 项目主页:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
+                host_display += f"[bold cyan]📂 远程路径:[/bold cyan] {remote_path_display}\n"
+                host_display += f"[bold cyan]🌐 项目首页:[/bold cyan] {cname_domain if cname_domain else '[yellow]为配置[/]'}"
             else:
-                host_display = f"[bold red]🖥️ 远程主机: 未配置[/bold red]\n"
-                host_display += f"[bold cyan]🌐 项目主页:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
+                host_display = f"[bold cyan]🖥️ 远程主机:[/bold cyan] [yellow]为配置[/]\n"
+                host_display += f"[bold cyan]🌐 项目首页:[/bold cyan] {cname_domain if cname_domain else '[yellow]为配置[/]'}"
 
             # 构造合并后的面板内容
             menu_content = f"[bold cyan]📂 项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
