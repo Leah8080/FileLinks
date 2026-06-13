@@ -112,10 +112,10 @@ def main():
                 mask_pass = "*" * len(cfg.get("password", "")) if cfg.get("password") else "未设置"
                 host_display = f"[bold cyan]🖥️ 远程主机:[/bold cyan] {proto}://{cfg.get('user')}@{cfg.get('host')}:{cfg.get('port')}\n"
                 host_display += f"[bold cyan]📂 远程路径:[/bold cyan] {cfg.get('remote_path')}\n"
-                host_display += f"[bold cyan]🌐 访问域名:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
+                host_display += f"[bold cyan]🌐 项目主页:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
             else:
                 host_display = f"[bold red]🖥️ 远程主机: 未配置[/bold red]\n"
-                host_display += f"[bold cyan]🌐 访问域名:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
+                host_display += f"[bold cyan]🌐 项目主页:[/bold cyan] [magenta]{cname_domain if cname_domain else '未配置'}[/magenta]"
 
             # 构造合并后的面板内容
             menu_content = f"[bold cyan]📂 项目路径:\n[/bold cyan] [bold green]{project_path}[/bold green]\n"
@@ -130,7 +130,7 @@ def main():
                 "🔎 本地预览 [dim]在浏览器中预览本地项目文件[/dim]",
                 "🔍 远程预览 [dim]预览远程主机文件树形结构[/dim]",
                 "⚙️ 主机配置 [dim]添加/更新远程主机连接信息(server.json)[/dim]",
-                "🌐 域名配置 [dim]添加/更新访问域名(CNAME)[/dim]",
+                "🌐 首页配置 [dim]添加/更新项目主页(CNAME)[/dim]",
                 "🔗 生成链接 [dim]生成项目文件访问链接(link.md)[/dim]", 
                 "📂 切换项目 [dim]切换当前项目路径[/dim]", 
                 "🚪 退出脚本"
@@ -211,7 +211,7 @@ def main():
                 input("\n按回车键继续...")
 
             elif choice == "7":
-                # 域名配置
+                # 首页配置
                 from src.site_info import manage_domain_config
                 manage_domain_config(project_path)
                 input("\n按回车键继续...")
